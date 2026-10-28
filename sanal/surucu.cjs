@@ -6,7 +6,7 @@ const fs = require('fs');
 const sen = JSON.parse(process.argv[2]);
 (async () => {
   const b = await chromium.launch();
-  const c = await b.newContext({ viewport: { width: 412, height: 860 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+  const c = await b.newContext({ acceptDownloads: true, viewport: { width: 412, height: 860 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
   const p = await c.newPage();
   const hatalar = []; p.on('pageerror', e => hatalar.push(e.message));
   await p.addInitScript((s) => { if (!localStorage.getItem('gk-baslatildi')) { localStorage.clear(); localStorage.setItem('gk-baslatildi', '1'); localStorage.setItem('sanal-gk-ayar', JSON.stringify({ _surum: 99, ...(s.ayar || {}) })); } }, sen);
@@ -28,6 +28,10 @@ const sen = JSON.parse(process.argv[2]);
       sonuc.adimlar.push({ a: 'isabet', alt, bilgi });
       if (a === 'ogret') { await p.click('#hudDugmeler button:has-text("Düzeltmeyi öğret")'); await p.waitForTimeout(300); }
       await kapat();
+    }
+    else if (a.startsWith('indir:')) {
+      const [ind] = await Promise.all([p.waitForEvent('download'), p.evaluate(() => { navigator.canShare = undefined; document.getElementById('bHamVeri').click(); })]);
+      await ind.saveAs(a.slice(6)); sonuc.adimlar.push({ a: 'indir', alt: a.slice(6) });
     }
     else if (a.startsWith('bekle:')) await p.waitForTimeout(+a.slice(6));
     else if (a.startsWith('ayar:')) { const [k, v] = a.slice(5).split('='); await p.evaluate(([k, v]) => { const s = JSON.parse(localStorage.getItem('sanal-gk-ayar')); s[k] = isNaN(+v) ? v : +v; localStorage.setItem('sanal-gk-ayar', JSON.stringify(s)); }, [k, v]); await p.reload(); await p.waitForFunction(() => !document.getElementById('bKamera').disabled); await p.click('#bKamera'); await p.waitForTimeout(1500); }

@@ -8,7 +8,7 @@ const SANAL_MOD = ADRES.has("sanal");
 if (SANAL_MOD) window.SANAL = Object.fromEntries([...ADRES].filter(([k]) => k !== "sanal" && k !== "v").map(([k, v]) => [k, +v]));
 const { FaceLandmarker, HandLandmarker, FilesetResolver } = await import(SANAL_MOD ? "./sanal/sanal_goz.mjs" : "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs");
 
-const SURUM = "lab 30";
+const SURUM = "lab 31";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -1052,6 +1052,8 @@ function imlecMotoru(hedefler = () => []) {
   return m;
 }
 
+const r4 = (v) => (v == null || Number.isNaN(v) ? null : Math.round(v * 1e4) / 1e4);
+
 // ------------------------------------------------------------------ kalibrasyon (Kotlin: KalibrasyonActivity)
 function kalibrasyon() {
   const k4 = [0.1, 0.37, 0.63, 0.9];
@@ -1101,7 +1103,7 @@ function kalibrasyon() {
       if (durum.sira < 0 || durum.sira >= noktalar.length || !k.yuz || durum.bekleme) return;
       if (t - durum.basi < S.toplamaBasi || !k.guvenilir || !k.f) return;
       const [x, y] = noktalar[durum.sira];
-      durum.toplanan.push({ f: k.f.slice(), x, y, t: 0 });
+      durum.toplanan.push({ f: k.f.slice(), x, y, t: 0, k: [r4(k.s.sol), r4(k.s.sag)], ms: Math.round(t) });
       if (durum.sira < normalSon) { durum.nTop += k.f[UZAKLIK]; durum.nSay++; }
     },
     ciz(t) {
@@ -1463,6 +1465,11 @@ function isabetTesti() {
     ac() { hud("İsabet testi", "Beliren noktaya bak. İmleç gösterilmez (kovalama olmasın).", ""); },
     kare(k, t) {
       if (d.sira < 0 || d.sira >= noktalar.length) return;
+      // Ham veri dışa aktarma için her kare (ölçüm, kırpma puanları, güvenilirlik, tahmin)
+      if (!P.sonTest || P.sonTest.d !== d) P.sonTest = { d, zaman: new Date().toISOString(), W: Math.round(W), H: Math.round(H), kareler: [] };
+      const [hx, hy] = noktalar[d.sira];
+      P.sonTest.kareler.push({ i: d.sira, ms: Math.round(t - d.basi), x: hx, y: hy, f: k.f?.map(r4) ?? null,
+        s: [k.s.sol, k.s.sag, k.s.bakisX, k.s.bakisY, k.s.donus, k.s.egim].map(r4), g: k.guvenilir ? 1 : 0, gx: G.gecerli ? r4(G.x) : null, gy: G.gecerli ? r4(G.y) : null });
       if (t - d.basi >= YOK && G.gecerli && k.f) { d.ornek.push([G.x * W, G.y * H]); d.ham.push([G.fx, G.fy]); d.uz.push(k.f[UZAKLIK]); if (k.guvenilir) d.ozler.push(k.f.slice()); }
     },
     ciz() {
@@ -1921,6 +1928,24 @@ $("bSonucSil").addEventListener("click", () => { sonuclar = []; yaz("gk-sonuc", 
 $("bVarsayilan").addEventListener("click", () => { S = { ...VARSAYILAN }; yaz("gk-ayar", S); ayarlariCiz(); profilEgit(true); });
 $("aMod").value = oku("gk-mod", "goz");
 $("aMod").addEventListener("change", () => yaz("gk-mod", $("aMod").value));
+// Ham veri: kalibrasyon örnekleri ve son isabet testinin her karesi (analiz için dosya olarak paylaşılır)
+$("bHamVeri").addEventListener("click", async () => {
+  const veri = {
+    surum: SURUM, zaman: new Date().toISOString(), ekran: oku("gk-ekran", null), ayarlar: S, model: { set: P.set, lam: P.lam },
+    kamera: [video.videoWidth, video.videoHeight], kayma: P.kayma, bilinen: P.bilinen,
+    ozellikler: "f: irisX, irisY, bakisX, bakisY, donus, egim, basX, basY, uzaklik, kapak · s: kirpSol, kirpSag, bakisX, bakisY, donus, egim",
+    kalibrasyon: P.ornekler.map((o) => ({ f: o.f.map(r4), x: r4(o.x), y: r4(o.y), t: o.t, k: o.k, ms: o.ms })),
+    test: P.sonTest ? { zaman: P.sonTest.zaman, W: P.sonTest.W, H: P.sonTest.H, kareler: P.sonTest.kareler } : null,
+  };
+  const ad = `gozkaydir-ham-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.json`;
+  const dosya = new File([JSON.stringify(veri)], ad, { type: "application/json" });
+  try {
+    if (navigator.canShare?.({ files: [dosya] })) { await navigator.share({ files: [dosya], title: ad }); return; }
+  } catch (e) { if (e?.name === "AbortError") return; }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(dosya); a.download = ad; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+});
 $("bKopyala").addEventListener("click", async () => {
   const metin = JSON.stringify({ surum: SURUM, ayarlar: S, sonuclar: sonuclar.slice(0, 15).map(({ ayar, ...s }) => s), profil: P.deger }, null, 1);
   try { await navigator.clipboard.writeText(metin); $("bKopyala").textContent = "Kopyalandı"; setTimeout(() => ($("bKopyala").textContent = "Sonuçları ve ayarları kopyala"), 1500); }
