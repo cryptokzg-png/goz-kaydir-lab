@@ -3,7 +3,7 @@
 // buradaki ayarlar bulunduktan sonra uygulamaya aktarılır.
 import { FaceLandmarker, HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const SURUM = "lab 27";
+const SURUM = "lab 28";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -667,7 +667,7 @@ addEventListener("resize", () => { if (aktif) boyutla(); });
 window.visualViewport?.addEventListener("resize", () => { if (aktif) boyutla(); });
 window.visualViewport?.addEventListener("scroll", () => { if (aktif) boyutla(); });
 // Profilin kalibre edildiği sahne boyutu: farklıysa (yakınlaştırma, döndürme, tam ekran) uyar
-function ekranKaydet() { yaz("gk-ekran", { w: Math.round(W), h: Math.round(H) }); }
+function ekranKaydet() { yaz("gk-ekran", { w: Math.round(W), h: Math.round(H), zaman: Date.now(), isik: Math.round(isik), uzaklik: sonKare?.f ? Math.round(sonKare.f[UZAKLIK]) : null }); }
 function ekranUyumsuz() {
   const e = oku("gk-ekran", null);
   return e && P.ornekler.length && (Math.abs(e.w - W) > 8 || Math.abs(e.h - H) > 40) ? e : null;
@@ -1331,7 +1331,7 @@ function isabetTesti() {
   const k3 = [0.1, 0.5, 0.9];
   const noktalar = k3.flatMap((y) => k3.map((x) => [x, y])).sort(() => Math.random() - 0.5);
   const SURE = 2000, YOK = 800;
-  const d = { sira: -1, basi: performance.now(), ornek: [], ham: [], ozler: [], sonuc: [], eklenecek: [], noktaOz: [] };
+  const d = { sira: -1, basi: performance.now(), ornek: [], ham: [], uz: [], ozler: [], sonuc: [], eklenecek: [], noktaOz: [], harita: false };
   function bitir() {
     const hata = d.sonuc.map((r) => r.hata), sirali = [...hata].sort((a, b) => a - b);
     const ort = hata.reduce((a, b) => a + b, 0) / hata.length;
@@ -1351,6 +1351,15 @@ function isabetTesti() {
       `\nAfin ölçek: yatay ${loo.olcekX} · dikey ${loo.olcekY} (1 = sıkışma yok)` : "";
     hud("İsabet testi bitti", `Ortalama hata ${ozet.ortPx} px ≈ ${Math.round(ozet.ortPx * 0.159)} mm · titreme ±${ozet.titremePx} px · düzeltme: ${S.kaymaTur}`,
       `Sabit kayma: ${yon} (${ozet.kaymaPx} px)\nKayma çıkınca kalan hata: ${kalan.toFixed(0)} px\nOrtanca ${ozet.ortancaPx} px · en kötü ${ozet.enKotuPx} px\n3×3 isabet %${ozet.i3x3} · 3×4 isabet %${ozet.i3x4}` + looYazi);
+    // Koşullar: kalibrasyondan bu yana geçen süre, ışık ve uzaklık değişti mi
+    const ek = oku("gk-ekran", null);
+    const uzTest = d.sonuc.reduce((a, r) => a + r.uz, 0) / d.sonuc.length;
+    const kosul = `\n\nKOŞULLAR · kalibrasyondan ${ek?.zaman ? Math.round((Date.now() - ek.zaman) / 60000) + " dk sonra" : "? sonra"}` +
+      ` · ışık ${ek?.isik ?? "?"} → ${Math.round(isik)} · uzaklık ${ek?.uzaklik ?? "?"} → ${uzTest.toFixed(0)} cm` +
+      (P.aralik ? ` (kalibre aralık ${P.aralik[0].toFixed(0)}–${P.aralik[1].toFixed(0)})` : "") + ` · ${fps.toFixed(0)} fps`;
+    $("hudBilgi").textContent += kosul;
+    ozet.noktalar = d.sonuc.map((r) => ({ hedef: [Math.round(r.nx * W), Math.round(r.ny * H)], olcum: [Math.round(r.mx), Math.round(r.my)], titreme: Math.round(r.titreme), kare: r.n }));
+    ozet.kosul = { dk: ek?.zaman ? Math.round((Date.now() - ek.zaman) / 60000) : null, isik: [ek?.isik ?? null, Math.round(isik)], uzaklik: [ek?.uzaklik ?? null, Math.round(uzTest)], fps: Math.round(fps) };
     const kalIliski = basIliskisi(P.ornekler.filter((o) => o.t === 0));
     if (kalIliski) { ozet.kalBasIliski = [kalIliski.yatay, kalIliski.dikey]; $("hudBilgi").textContent += `\n\nKALİBRASYONDA ${kalIliski.yazi}`; }
     if (loo) { sonuclar[0].yazi += ` · LOO ham ${loo.hamPx} / sabit ${loo.sabitPx} / afin ${loo.afinPx}`; sonuclar[0].ozet = ozet; yaz("gk-sonuc", sonuclar); sonucCiz(); }
@@ -1395,6 +1404,7 @@ function isabetTesti() {
       dugmeler([["Tekrar test et", () => { sahneKapat(); sahneAc(isabetTesti()); }, true]]);
     };
     dugmeler([["Tekrar", () => { sahneKapat(); sahneAc(isabetTesti()); }, true],
+      ["Haritayı göster / gizle", () => { d.harita = !d.harita; $("hudBilgiKutu").hidden = d.harita; hudUst.style.visibility = d.harita ? "hidden" : "visible"; }],
       ...(enIyi && (enIyi.set !== S.ozellik || enIyi.lam !== S.lambda) ? [["En iyi modeli seç", enIyiyiSec]] : []),
       ...(d.sonuc.length ? [["Düzeltmeyi öğret", () => {
         kaymaGuncelle(kx / W, ky / H, 1);
@@ -1410,13 +1420,23 @@ function isabetTesti() {
     ac() { hud("İsabet testi", "Beliren noktaya bak. İmleç gösterilmez (kovalama olmasın).", ""); },
     kare(k, t) {
       if (d.sira < 0 || d.sira >= noktalar.length) return;
-      if (t - d.basi >= YOK && G.gecerli && k.f) { d.ornek.push([G.x * W, G.y * H]); d.ham.push([G.fx, G.fy]); if (k.guvenilir) d.ozler.push(k.f.slice()); }
+      if (t - d.basi >= YOK && G.gecerli && k.f) { d.ornek.push([G.x * W, G.y * H]); d.ham.push([G.fx, G.fy]); d.uz.push(k.f[UZAKLIK]); if (k.guvenilir) d.ozler.push(k.f.slice()); }
     },
     ciz() {
       const t = performance.now();
       if (!P.model) { hud("Önce kalibre et", "", ""); return; }
       if (d.sira === -1) { if (t - d.basi > 1000) { d.sira = 0; d.basi = t; } return; }
-      if (d.sira >= noktalar.length) return;
+      if (d.sira >= noktalar.length) {
+        // Hata haritası: sarı halka hedef, mavi nokta ölçülen ortalama bakış, çizgi hata, soluk daire titreme
+        for (const r of d.sonuc) {
+          const hx = r.nx * W, hy = r.ny * H;
+          ctx.strokeStyle = "rgba(255,138,76,.9)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(r.mx, r.my); ctx.stroke();
+          daire(r.mx, r.my, Math.max(4, r.titreme), "rgba(90,162,255,.15)");
+          daire(hx, hy, 14, null, RENK.vurgu, 3);
+          daire(r.mx, r.my, 6, RENK.mavi);
+        }
+        return;
+      }
       const [nx, ny] = noktalar[d.sira];
       hudKacin([[nx * W, ny * H]]);
       const p = Math.min(1, (t - d.basi) / SURE);
@@ -1429,11 +1449,12 @@ function isabetTesti() {
           const mx = d.ornek.reduce((a, o) => a + o[0], 0) / d.ornek.length, my = d.ornek.reduce((a, o) => a + o[1], 0) / d.ornek.length;
           const titreme = Math.sqrt(d.ornek.reduce((a, o) => a + (o[0] - mx) ** 2 + (o[1] - my) ** 2, 0) / d.ornek.length);
           const ort = (i) => d.ham.reduce((a, o) => a + o[i], 0) / d.ham.length;
-          d.sonuc.push({ ex: mx - nx * W, ey: my - ny * H, hata: Math.hypot(mx - nx * W, my - ny * H), titreme, hx: ort(0), hy: ort(1), nx, ny });
+          d.sonuc.push({ ex: mx - nx * W, ey: my - ny * H, hata: Math.hypot(mx - nx * W, my - ny * H), titreme, hx: ort(0), hy: ort(1), nx, ny, mx, my, n: d.ornek.length,
+            uz: d.uz.reduce((a, b) => a + b, 0) / d.uz.length });
         }
         for (const f of d.ozler) d.eklenecek.push({ f, x: nx, y: ny, t: 2 });
         if (d.ozler.length >= 3) d.noktaOz.push({ x: nx, y: ny, ozler: d.ozler });
-        d.ornek = []; d.ham = []; d.ozler = []; d.sira++; d.basi = t;
+        d.ornek = []; d.ham = []; d.uz = []; d.ozler = []; d.sira++; d.basi = t;
         if (d.sira >= noktalar.length) { d.sonuc.length >= 5 ? bitir() : hud("Yeterli ölçüm yok", "Yüzünün göründüğünden emin ol", ""); }
       }
     },
