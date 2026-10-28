@@ -3,7 +3,7 @@
 // buradaki ayarlar bulunduktan sonra uygulamaya aktarılır.
 import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const SURUM = "lab 9";
+const SURUM = "lab 10";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -464,9 +464,10 @@ function tahminGuncelle(k) {
   px -= P.kayma.x; py -= P.kayma.y;
   G.hamX = px; G.hamY = py;
   // Sıçrama süzgeci: büyük ani sıçrama ancak sonraki karelerde de aynı yerde kalırsa kabul edilir.
+  // Ardışık karelerin birbirine yakın olması şart değil (doğal titreme bunu bozar):
+  // uzakta kalmaya devam etmesi yeterli. Kırpmadaki 1–2 karelik sıçrama geri döndüğü için elenir.
   if (G.gecerli && S.sicramaKare > 0 && Math.hypot(px - G.x, py - G.y) > S.sicramaEsik) {
-    if (aday.n > 0 && Math.hypot(px - aday.x, py - aday.y) < S.sicramaEsik / 2) aday.n++;
-    else { aday.x = px; aday.y = py; aday.n = 1; }
+    aday.n++;
     if (aday.n <= S.sicramaKare) return;
     fX.sifirla(); fY.sifirla();
   }
