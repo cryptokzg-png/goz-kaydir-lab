@@ -3,7 +3,7 @@
 // buradaki ayarlar bulunduktan sonra uygulamaya aktarılır.
 import { FaceLandmarker, HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const SURUM = "lab 20";
+const SURUM = "lab 21";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -56,7 +56,7 @@ const AYAR_TANIM = [
   { k: "kontrol", ad: "İmleç kontrolü", secenek: [["goz", "Sadece göz"], ["parmak", "Sadece parmak"], ["gozParmak", "Göz + parmak"]], v: "goz", not: "Göz + parmak: göz imleci götürür, işaret parmağını kaldırınca imleç o noktadan parmakla kayar." },
   { k: "elAlan", ad: "Sadece parmak: kamera alanı", min: 0.3, max: 1, adim: 0.05, v: 0.6, not: "Kameranın ortasındaki bu oran tüm ekrana yayılır. Küçük = az el hareketiyle tüm ekran." },
   { k: "parmakHassas", ad: "Göz + parmak: ince ayar hızı", min: 0.3, max: 4, adim: 0.1, v: 1.2, not: "Parmağın kamerada kat ettiği yolun ekranda kaç katı kadar kayacağı." },
-  { k: "kaydirModu", ad: "Kaydırma", secenek: [["cimdik", "Çimdikle sürükle (telefondaki gibi)"], ["joystick", "İki parmak joystick"], ["mesafe", "İki parmak mesafe"]], v: "cimdik", not: "Çimdikle sürükle: çimdikle tut, elini yukarı-aşağı götür, bırak. Hızlı bırakırsan liste kaymaya devam eder." },
+  { k: "kaydirModu", ad: "Kaydırma", secenek: [["yumruk", "Yumrukla tut ve çek"], ["cimdik", "Çimdikle sürükle"], ["joystick", "İki parmak joystick"], ["mesafe", "İki parmak mesafe"]], v: "yumruk", not: "Yumruk: elini yumruk yap (tut), aşağı-yukarı götür, elini aç (bırak). Hızlı bırakırsan liste biraz daha kayar." },
   { k: "surukleYon", ad: "Sürükleme yönü", secenek: [["ters", "El aşağı = listede aşağı"], ["telefon", "Telefondaki gibi (içerik eli izler)"]], v: "ters" },
   { k: "kaydirHiz", ad: "Joystick hızı (px/sn)", min: 200, max: 4000, adim: 100, v: 900, not: "Parmak, ölü bölgenin %10 ötesine çekildiğinde saniyedeki kaydırma. Hız karesel artar: az çekince çok yavaş." },
   { k: "kaydirOlu", ad: "Joystick ölü bölgesi", min: 0.01, max: 0.1, adim: 0.005, v: 0.04, not: "Parmak başlangıç noktasından bu kadar uzaklaşmadan kaydırma başlamaz." },
@@ -74,7 +74,7 @@ S = { ...VARSAYILAN, ...oku("gk-ayar", {}) };
 if ((S._surum || 0) < 18) { S.kaydirHiz = VARSAYILAN.kaydirHiz; S._surum = 18; yaz("gk-ayar", S); }
 if ((S._surum || 0) < 20) { S.surukleYon = "ters"; }
 if ((S._surum || 0) < 19) { S.kaydirModu = "cimdik"; S.kaydirMesafe = VARSAYILAN.kaydirMesafe; }
-if ((S._surum || 0) < 20) { S._surum = 20; yaz("gk-ayar", S); }
+if ((S._surum || 0) < 21) { S.kaydirModu = "yumruk"; S._surum = 21; yaz("gk-ayar", S); }
 // Eski sürümden kalan seçenek değerleri
 if (!AYAR_TANIM.find((a) => a.k === "ogren").secenek.some(([v]) => v === S.ogren)) S.ogren = VARSAYILAN.ogren;
 
@@ -300,7 +300,7 @@ const video = $("video");
 let yuzModeli = null;
 let elModeli = null, elYukleniyor = false;
 // El: işaret parmağı (imleç) ve iki parmak (kaydırma). Konum ekran oranı, aynalanmış (kullanıcının sağı = ekranın sağı).
-const EL = { var: false, isaret: false, iki: false, avuc: false, avucBasi: 0, cimdik: false, cimdikOlay: false, x: 0.5, y: 0.5, sonIsaret: 0, sonIki: 0, sonCimdik: 0, fx: new OneEuro(), fy: new OneEuro() };
+const EL = { var: false, isaret: false, iki: false, yumruk: false, sonYumruk: 0, avuc: false, avucBasi: 0, cimdik: false, cimdikOlay: false, x: 0.5, y: 0.5, sonIsaret: 0, sonIki: 0, sonCimdik: 0, fx: new OneEuro(), fy: new OneEuro() };
 function elGerekli() { return S.kontrol !== "goz" || S.tikYontem === "cimdik" || !!aktif?.elIster; }
 async function elYukle() {
   if (elModeli || elYukleniyor) return;
@@ -322,7 +322,7 @@ function elIsle(t) {
   EL.cimdikOlay = false; EL.cimdikBirak = false;
   if (!lm) {
     if (EL.cimdik) { EL.cimdikBirak = true; EL.cimdikSure = t - EL.cimdikBasT; }
-    EL.var = EL.isaret = EL.iki = EL.cimdik = EL.avuc = EL.surukle = false; EL.avucBasi = 0; return;
+    EL.var = EL.isaret = EL.iki = EL.cimdik = EL.avuc = EL.surukle = EL.yumruk = false; EL.avucBasi = 0; return;
   }
   const d = (a, b) => Math.hypot(lm[a].x - lm[b].x, lm[a].y - lm[b].y);
   const acik = (uc, eklem) => d(uc, 0) > d(eklem, 0) * 1.15;
@@ -337,8 +337,11 @@ function elIsle(t) {
   EL.cimdik = !orta && !yuzuk && !serce && (oncekiCimdik ? aralik < 0.45 : aralik < 0.28);
   EL.iki = !EL.cimdik && isaret && orta && !yuzuk && !serce;
   EL.isaret = EL.cimdik || (isaret && !orta && !yuzuk && !serce);
-  // Takip noktası: çimdikte iki parmak ucunun ortası (birleşirken kaymaz), iki parmakta uçların ortası, yoksa işaret ucu
-  const [ux, uy] = EL.cimdik ? [(lm[4].x + lm[8].x) / 2, (lm[4].y + lm[8].y) / 2]
+  // Yumruk: dört parmak da kapalı (çimdik değilken)
+  EL.yumruk = !EL.cimdik && !isaret && !orta && !yuzuk && !serce;
+  if (EL.yumruk) EL.sonYumruk = t;
+  // Takip noktası: yumrukta orta parmak kökü (sabit), çimdikte iki ucun ortası, iki parmakta uçların ortası, yoksa işaret ucu
+  const [ux, uy] = EL.yumruk ? [lm[9].x, lm[9].y] : EL.cimdik ? [(lm[4].x + lm[8].x) / 2, (lm[4].y + lm[8].y) / 2]
     : EL.iki ? [(lm[8].x + lm[12].x) / 2, (lm[8].y + lm[12].y) / 2] : [lm[8].x, lm[8].y];
   EL.x = EL.fx.filtre(1 - ux, t, 2, 0.5);
   EL.y = EL.fy.filtre(uy, t, 2, 0.5);
@@ -1283,8 +1286,10 @@ function satiraOtur(off, satir, hiza, dt) {
 function kaydirGuncelle(kd, t, dt, satir, hiza, enFazla) {
   kd.v = kd.v || 0;
   let surer = false;
-  if (S.kaydirModu === "cimdik") {
-    if (EL.surukle) {
+  if (S.kaydirModu === "cimdik" || S.kaydirModu === "yumruk") {
+    // Yumruk: kısa algılama boşluklarında (200 ms) bırakılmış sayılmasın
+    const tutuyor = S.kaydirModu === "yumruk" ? EL.var && (EL.yumruk || (kd.bas && t - EL.sonYumruk < 200)) : EL.surukle;
+    if (tutuyor) {
       // Dokunmatik ekrandaki gibi: el yukarı giderse içerik yukarı gider
       if (!kd.bas) kd.bas = { y: EL.y, off: kd.off };
       const yeni = kd.bas.off + (S.surukleYon === "ters" ? 1 : -1) * (EL.y - kd.bas.y) * S.kaydirMesafe * H;
@@ -1325,12 +1330,12 @@ function parmakTesti() {
     d.bitti = true;
     const ort = d.sureler.reduce((a, b) => a + b, 0) / d.sureler.length / 1000;
     sonucEkle("Kaydırma", { mod: S.kaydirModu, ortSureSn: +ort.toFixed(1) }, `${S.kaydirModu} · ${HEDEF_SAYI} satır · ort ${ort.toFixed(1)} sn`);
-    hud("Parmak testi bitti", `${HEDEF_SAYI} satır · ortalama ${ort.toFixed(1)} sn (${{ cimdik: "çimdikle sürükle", joystick: "joystick", mesafe: "mesafe" }[S.kaydirModu]})`, "");
+    hud("Parmak testi bitti", `${HEDEF_SAYI} satır · ortalama ${ort.toFixed(1)} sn (${{ yumruk: "yumrukla çek", cimdik: "çimdikle sürükle", joystick: "joystick", mesafe: "mesafe" }[S.kaydirModu]})`, "");
     dugmeler([["Tekrar", () => { sahneKapat(); sahneAc(parmakTesti()); }, true]]);
   }
   return {
     elIster: true,
-    ac() { hud("Parmak testi", S.kaydirModu === "cimdik" ? "Başparmak ve işaret parmağıyla çimdik yap, tutarken elini yukarı-aşağı götür, bırak" : "İşaret ve orta parmağını göster, aşağı-yukarı hareket ettirerek kaydır", ""); },
+    ac() { hud("Parmak testi", S.kaydirModu === "yumruk" ? "Elini yumruk yap, aşağı-yukarı götür, elini aç" : S.kaydirModu === "cimdik" ? "Başparmak ve işaret parmağıyla çimdik yap, tutarken elini yukarı-aşağı götür, bırak" : "İşaret ve orta parmağını göster, aşağı-yukarı hareket ettirerek kaydır", ""); },
     kare(k, t) {
       if (d.bitti) return;
       const dt = d.sonT ? Math.min(0.1, (t - d.sonT) / 1000) : 0;
@@ -1350,7 +1355,7 @@ function parmakTesti() {
     ciz() {
       if (d.bitti) return;
       const hedef = hedefler[d.i];
-      hud(`Parmak testi · ${d.i + 1} / ${HEDEF_SAYI}`, null, `Satır ${hedef + 1}'i ortadaki banda getir\n${d.bas ? "Kaydırıyor" : EL.cimdik ? "Çimdik" : EL.var ? "El görünüyor" : "El görünmüyor"} · ${{ cimdik: "çimdikle sürükle", joystick: "joystick", mesafe: "mesafe" }[S.kaydirModu]}`);
+      hud(`Parmak testi · ${d.i + 1} / ${HEDEF_SAYI}`, null, `Satır ${hedef + 1}'i ortadaki banda getir\n${d.bas ? "Kaydırıyor" : EL.yumruk ? "Yumruk" : EL.cimdik ? "Çimdik" : EL.var ? "El görünüyor" : "El görünmüyor"} · ${{ yumruk: "yumrukla çek", cimdik: "çimdikle sürükle", joystick: "joystick", mesafe: "mesafe" }[S.kaydirModu]}`);
       ctx.font = "600 16px system-ui"; ctx.textBaseline = "middle";
       const ilk = Math.max(0, Math.floor((d.off - UST) / SH) - 1), son = Math.min(SATIR, ilk + Math.ceil(H / SH) + 3);
       for (let i = ilk; i < son; i++) {
@@ -1458,7 +1463,7 @@ function telefonTesti() {
       const dt = d.sonT ? Math.min(0.1, (t - d.sonT) / 1000) : 0;
       d.sonT = t;
       // Kaydırma: iki parmak (liste ekranında)
-      const iki = S.kaydirModu !== "cimdik" && (EL.iki || (EL.var && t - EL.sonIki < 300));
+      const iki = S.kaydirModu === "yumruk" ? EL.yumruk : S.kaydirModu !== "cimdik" && (EL.iki || (EL.var && t - EL.sonIki < 300));
       if (d.ekran === "liste") kaydirGuncelle(d, t, dt, SATIR, 0, listeBoyu());
       // Geri: açık avuç 0,6 sn
       if (EL.avuc && EL.avucBasi && t - EL.avucBasi > 600 && t - d.sonGeri > 1200) { d.sonGeri = t; geri(); }
