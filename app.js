@@ -3,7 +3,7 @@
 // buradaki ayarlar bulunduktan sonra uygulamaya aktarılır.
 import { FaceLandmarker, HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const SURUM = "lab 26";
+const SURUM = "lab 27";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -1044,7 +1044,8 @@ function kalibrasyon() {
     setTimeout(() => {
       profilEgit(true);
       const d = P.deger;
-      hud("Kalibrasyon bitti", d ? `Kalibrasyon hatası ≈ ${d.hataPx.toFixed(0)} px (${(d.hataPx * 0.159).toFixed(0)} mm) · ızgara ${P.cols}×${P.rows}` : "", "");
+      hud("Kalibrasyon bitti", d ? `Kalibrasyon hatası ≈ ${d.hataPx.toFixed(0)} px (${(d.hataPx * 0.159).toFixed(0)} mm) · ızgara ${P.cols}×${P.rows}` : "",
+        basIliskisi(durum.toplanan)?.yazi ?? "");
       dugmeler([["Canlı bakışa geç", () => { sahneKapat(); sahneAc(canli()); }, true]]);
     }, 50);
   }
@@ -1175,7 +1176,7 @@ function dokunarakKalibrasyon(ekle) {
       profilEgit(true);
       const g = P.deger;
       hud("Dokunarak kalibrasyon bitti", g ? `Kalibrasyon hatası ≈ ${g.hataPx.toFixed(0)} px (${(g.hataPx * 0.159).toFixed(0)} mm) · ızgara ${P.cols}×${P.rows}` : "",
-        `${noktalar.length - d.kaçan} nokta · ${d.toplanan.length} örnek · ${d.kaçan} tekrar edilen dokunma`);
+        `${noktalar.length - d.kaçan} nokta · ${d.toplanan.length} örnek · ${d.kaçan} tekrar edilen dokunma\n` + (basIliskisi(d.toplanan)?.yazi ?? ""));
       dugmeler([["Tıklama testi", () => { sahneKapat(); sahneAc(tiklamaTesti()); }, true], ["İsabet testi", () => { sahneKapat(); sahneAc(isabetTesti()); }]]);
     }, 50);
   }
@@ -1306,6 +1307,25 @@ function duzeltmeKarsilastir(sonuc) {
   return { hamPx: Math.round(ham / n), sabitPx: Math.round(sabit / n), afinPx: Math.round(afin / n), olcekX: +ax[1].toFixed(2), olcekY: +ay[2].toFixed(2) };
 }
 
+/**
+ * Baş/telefon hedefle birlikte oynadı mı: baş açısı ve konumunun hedef konumuyla ilişkisi (|r|, 0–1).
+ * Yüksekse model hedefi gözden değil baş hareketinden öğrenir; sadece gözle bakınca tahminler ortaya sıkışır.
+ */
+function basIliskisi(ornekler) {
+  if (ornekler.length < 20) return null;
+  const r = (a, b) => {
+    const n = a.length, ma = a.reduce((x, y) => x + y, 0) / n, mb = b.reduce((x, y) => x + y, 0) / n;
+    let sab = 0, sa = 0, sb = 0;
+    for (let i = 0; i < n; i++) { sab += (a[i] - ma) * (b[i] - mb); sa += (a[i] - ma) ** 2; sb += (b[i] - mb) ** 2; }
+    return sa && sb ? Math.abs(sab / Math.sqrt(sa * sb)) : 0;
+  };
+  const xs = ornekler.map((o) => o.x), ys = ornekler.map((o) => o.y), f = (i) => ornekler.map((o) => o.f[i]);
+  const yatay = Math.max(r(f(4), xs), r(f(6), xs)), dikey = Math.max(r(f(5), ys), r(f(7), ys));
+  const yazi = `Baş/telefon hedefle birlikte oynadı: yatay ${yatay.toFixed(2)} · dikey ${dikey.toFixed(2)} (0 = hiç, 1 = tamamen)` +
+    (Math.max(yatay, dikey) > 0.5 ? "\n⚠ Yüksek: model hedefi baş hareketinden öğrenmiş olabilir; sadece gözle bakınca imleç ortaya sıkışır. Başını ve telefonu sabit tut." : "");
+  return { yatay: +yatay.toFixed(2), dikey: +dikey.toFixed(2), yazi };
+}
+
 function isabetTesti() {
   // Köşeler de ölçülsün: imlecin kenarlara gidememesi (tahminlerin ortaya sıkışması) burada görünür
   const k3 = [0.1, 0.5, 0.9];
@@ -1331,6 +1351,8 @@ function isabetTesti() {
       `\nAfin ölçek: yatay ${loo.olcekX} · dikey ${loo.olcekY} (1 = sıkışma yok)` : "";
     hud("İsabet testi bitti", `Ortalama hata ${ozet.ortPx} px ≈ ${Math.round(ozet.ortPx * 0.159)} mm · titreme ±${ozet.titremePx} px · düzeltme: ${S.kaymaTur}`,
       `Sabit kayma: ${yon} (${ozet.kaymaPx} px)\nKayma çıkınca kalan hata: ${kalan.toFixed(0)} px\nOrtanca ${ozet.ortancaPx} px · en kötü ${ozet.enKotuPx} px\n3×3 isabet %${ozet.i3x3} · 3×4 isabet %${ozet.i3x4}` + looYazi);
+    const kalIliski = basIliskisi(P.ornekler.filter((o) => o.t === 0));
+    if (kalIliski) { ozet.kalBasIliski = [kalIliski.yatay, kalIliski.dikey]; $("hudBilgi").textContent += `\n\nKALİBRASYONDA ${kalIliski.yazi}`; }
     if (loo) { sonuclar[0].yazi += ` · LOO ham ${loo.hamPx} / sabit ${loo.sabitPx} / afin ${loo.afinPx}`; sonuclar[0].ozet = ozet; yaz("gk-sonuc", sonuclar); sonucCiz(); }
     // Model karşılaştırması: aynı test ölçümleri, profildeki aynı örneklerle eğitilmiş farklı modeller
     const egitimSeti = P.ornekler.filter((o) => o.t !== 2);
