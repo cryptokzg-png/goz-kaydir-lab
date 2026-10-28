@@ -3,7 +3,7 @@
 // buradaki ayarlar bulunduktan sonra uygulamaya aktarılır.
 import { FaceLandmarker, HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const SURUM = "lab 15";
+const SURUM = "lab 16";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -42,7 +42,7 @@ const AYAR_TANIM = [
   { k: "basTersX", ad: "Baş yönü sağ-sol", secenek: [["normal", "Normal"], ["ters", "Ters"]], v: "normal" },
   { k: "basTersY", ad: "Baş yönü yukarı-aşağı", secenek: [["normal", "Normal"], ["ters", "Ters"]], v: "normal" },
   { b: "Tıklama" },
-  { k: "tikYontem", ad: "Tıklama yöntemi", secenek: [["kapat", "Gözleri kapat"], ["bekle", "Bakıp bekle"]], v: "kapat", not: "Gözleri kapat: iki gözü kısa bir süre kapatıp açınca tıklar (normal göz kırpmayla karışmaz)." },
+  { k: "tikYontem", ad: "Tıklama yöntemi", secenek: [["kapat", "Gözleri kapat"], ["cimdik", "Parmak çimdiği (başparmak + işaret)"], ["bekle", "Bakıp bekle"]], v: "kapat", not: "Gözleri kapat: iki gözü kısa bir süre kapatıp açınca tıklar (normal göz kırpmayla karışmaz)." },
   { k: "tikKapatMs", ad: "Gözleri kapalı tutma süresi (ms)", min: 250, max: 1200, adim: 50, v: 500 },
   { k: "bekleTikMs", ad: "Bekleme süresi (ms)", min: 400, max: 2500, adim: 50, v: 1000 },
   { k: "bekleEsik", ad: "Sabit sayılma eşiği, göz modu (px)", min: 8, max: 60, adim: 2, v: 28 },
@@ -292,8 +292,8 @@ const video = $("video");
 let yuzModeli = null;
 let elModeli = null, elYukleniyor = false;
 // El: işaret parmağı (imleç) ve iki parmak (kaydırma). Konum ekran oranı, aynalanmış (kullanıcının sağı = ekranın sağı).
-const EL = { var: false, isaret: false, iki: false, x: 0.5, y: 0.5, sonIsaret: 0, sonIki: 0, fx: new OneEuro(), fy: new OneEuro() };
-function elGerekli() { return S.kontrol !== "goz" || !!aktif?.elIster; }
+const EL = { var: false, isaret: false, iki: false, cimdik: false, cimdikOlay: false, x: 0.5, y: 0.5, sonIsaret: 0, sonIki: 0, sonCimdik: 0, fx: new OneEuro(), fy: new OneEuro() };
+function elGerekli() { return S.kontrol !== "goz" || S.tikYontem === "cimdik" || !!aktif?.elIster; }
 async function elYukle() {
   if (elModeli || elYukleniyor) return;
   elYukleniyor = true;
@@ -311,11 +311,19 @@ function elIsle(t) {
   let r;
   try { r = elModeli.detectForVideo(video, t); } catch { return; }
   const lm = r.landmarks?.[0];
-  if (!lm) { EL.var = EL.isaret = EL.iki = false; return; }
+  EL.cimdikOlay = false;
+  if (!lm) { EL.var = EL.isaret = EL.iki = EL.cimdik = false; return; }
   const d = (a, b) => Math.hypot(lm[a].x - lm[b].x, lm[a].y - lm[b].y);
   const acik = (uc, eklem) => d(uc, 0) > d(eklem, 0) * 1.15;
   const isaret = acik(8, 6), orta = acik(12, 10), yuzuk = acik(16, 14), serce = acik(20, 18);
   EL.var = true;
+  // Çimdik: başparmak ucu ile işaret ucu birleşti (el boyuna göre). Açılıp kapanmada titreşmesin diye iki eşik.
+  const boy = Math.max(1e-3, d(0, 9)), aralik = d(4, 8) / boy;
+  const oncekiCimdik = EL.cimdik;
+  EL.cimdik = oncekiCimdik ? aralik < 0.45 : aralik < 0.28;
+  if (EL.cimdik && !oncekiCimdik && t - EL.sonCimdik > 400) { EL.cimdikOlay = true; EL.sonCimdik = t; }
+  // Çimdik yaparken işaret parmağı bükülebilir: imleç parmağı sayılmaya devam etsin
+  if (EL.cimdik && !orta && !yuzuk && !serce) { EL.isaret = true; EL.iki = false; EL.sonIsaret = t; return; }
   EL.isaret = isaret && !orta && !yuzuk && !serce;
   EL.iki = isaret && orta && !yuzuk && !serce;
   const ux = EL.iki ? (lm[8].x + lm[12].x) / 2 : lm[8].x, uy = EL.iki ? (lm[8].y + lm[12].y) / 2 : lm[8].y;
@@ -682,6 +690,21 @@ function imlecMotoru(hedefler = () => []) {
     }
     // Parmak: sadece parmak modunda her zaman, göz + parmakta işaret parmağı kalkınca imleci parmak yönetir
     if (S.kontrol !== "goz") parmakGuncelle(t);
+    // Çimdik: tıklama, parmaklar birleşmeye başlamadan önceki imleç yerine gider
+    let cimdikTik = null;
+    if (S.tikYontem === "cimdik") {
+      m.gecmis = m.gecmis || [];
+      m.gecmis.push({ t, x: m.x, y: m.y });
+      while (m.gecmis.length && t - m.gecmis[0].t > 400) m.gecmis.shift();
+      if (EL.cimdikOlay && t - m.sonTik >= S.tikAra) {
+        const once = m.gecmis.find((g) => g.t >= t - 200) || { x: m.x, y: m.y };
+        cimdikTik = { x: once.x, y: once.y };
+        m.sonTik = t;
+      }
+      if (EL.cimdik && m.cimdikDondur) { m.x = m.cimdikDondur.x; m.y = m.cimdikDondur.y; }
+      m.cimdikDondur = EL.cimdik ? (m.cimdikDondur || cimdikTik || { x: m.x, y: m.y }) : null;
+    }
+    if (cimdikTik) { if (m.kilitli) m.kilitBirak(); return cimdikTik; }
     if (m.parmakAktif) {
       if (kapamaTik) { m.sonTik = t; return { x: m.x, y: m.y }; }
       return bekleTik(t, S.bekleEsik, S.bekleTikMs);
@@ -1181,11 +1204,11 @@ function tiklamaTesti() {
   return {
     ac() {
       sonraki();
-      hud("Tıklama testi", S.kontrol === "parmak" ? `İşaret parmağınla imleci sarı hedefe götür, ${S.tikYontem === "kapat" ? "gözlerini yarım saniye kapatıp açarak tıkla" : "bekle"}.`
-        : S.kontrol === "gozParmak" ? `Sarı hedefe bak; gerekirse işaret parmağını kaldırıp imleci kaydır, ${S.tikYontem === "kapat" ? "gözlerini yarım saniye kapatıp açarak tıkla" : "bekle"}.`
+      hud("Tıklama testi", S.kontrol === "parmak" ? `İşaret parmağınla imleci sarı hedefe götür, ${S.tikYontem === "kapat" ? "gözlerini yarım saniye kapatıp açarak tıkla" : S.tikYontem === "cimdik" ? "başparmakla işaret parmağını birleştirerek tıkla" : "bekle"}.`
+        : S.kontrol === "gozParmak" ? `Sarı hedefe bak; gerekirse işaret parmağını kaldırıp imleci kaydır, ${S.tikYontem === "kapat" ? "gözlerini yarım saniye kapatıp açarak tıkla" : S.tikYontem === "cimdik" ? "başparmakla işaret parmağını birleştirerek tıkla" : "bekle"}.`
         : $("aMod").value === "kilit"
         ? `Sarı hedefe bak. Artı yanlış hedefteyse başını o yöne hafifçe çevirip geri getir. ${S.tikYontem === "kapat" ? "Gözlerini yarım saniye kapatıp açarak tıkla." : "Sonra bekle."}`
-        : `Sarı hedefe bak, ${S.tikYontem === "kapat" ? "gözlerini yarım saniye kapatıp açarak tıkla" : "bekle"}. Gri hedefler tuzak.`, "");
+        : `Sarı hedefe bak, ${S.tikYontem === "kapat" ? "gözlerini yarım saniye kapatıp açarak tıkla" : S.tikYontem === "cimdik" ? "başparmakla işaret parmağını birleştirerek tıkla" : "bekle"}. Gri hedefler tuzak.`, "");
     },
     kare(k, t) {
       if (!d.hedef) return;
@@ -1209,7 +1232,7 @@ function tiklamaTesti() {
     },
     ciz() {
       const t = performance.now();
-      if (!P.model) { hud("Önce kalibre et", "", ""); return; }
+      if (!P.model && S.kontrol !== "parmak") { hud("Önce kalibre et (ya da Ayarlar → İmleç kontrolü: Sadece parmak)", "", ""); return; }
       if (d.hedef) hudKacin([[d.hedef.x, d.hedef.y], ...d.tuzak.map((h) => [h.x, h.y])]);
       if (d.hedef) hud(`Tıklama testi · ${d.sira + 1} / ${SAYI}`, null, `${d.dogru} doğru · ${d.yanlis} yanlış · kalan ${Math.max(0, (ZAMAN - (t - d.basi)) / 1000).toFixed(0)} sn`);
       im.ciz((olcek) => {
