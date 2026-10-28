@@ -3,7 +3,7 @@
 // buradaki ayarlar bulunduktan sonra uygulamaya aktarılır.
 import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const SURUM = "lab 12";
+const SURUM = "lab 13";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -41,7 +41,9 @@ const AYAR_TANIM = [
   { k: "atlaEsik", ad: "Atlama için baş hareketi (derece)", min: 1, max: 8, adim: 0.5, v: 3, not: "Başı bu kadar çevirip geri getirince yandaki hedefe geçer." },
   { k: "basTersX", ad: "Baş yönü sağ-sol", secenek: [["normal", "Normal"], ["ters", "Ters"]], v: "normal" },
   { k: "basTersY", ad: "Baş yönü yukarı-aşağı", secenek: [["normal", "Normal"], ["ters", "Ters"]], v: "normal" },
-  { b: "Tıklama (bakıp bekle)" },
+  { b: "Tıklama" },
+  { k: "tikYontem", ad: "Tıklama yöntemi", secenek: [["kapat", "Gözleri kapat"], ["bekle", "Bakıp bekle"]], v: "kapat", not: "Gözleri kapat: iki gözü kısa bir süre kapatıp açınca tıklar (normal göz kırpmayla karışmaz)." },
+  { k: "tikKapatMs", ad: "Gözleri kapalı tutma süresi (ms)", min: 250, max: 1200, adim: 50, v: 500 },
   { k: "bekleTikMs", ad: "Bekleme süresi (ms)", min: 400, max: 2500, adim: 50, v: 1000 },
   { k: "bekleEsik", ad: "Sabit sayılma eşiği, göz modu (px)", min: 8, max: 60, adim: 2, v: 28 },
   { k: "kilitTikMs", ad: "Kilitliyken tıklama süresi (ms)", min: 600, max: 3000, adim: 100, v: 1500, not: "İnce ayar için zaman tanır." },
@@ -624,10 +626,27 @@ function imlecMotoru(hedefler = () => []) {
 
   /** @returns {x,y} tıklama olduysa */
   m.guncelle = (k, t) => {
-    if (!G.gecerli || !k.f || !k.guvenilir) return null;
     const mod = $("aMod").value;
+    // Gözleri kapatıp açarak tıklama: göz kapalıyken imleç donuk olduğu için tıklama imlecin olduğu yere gider
+    let kapamaTik = false;
+    if (S.tikYontem === "kapat" && k.yuz) {
+      const kapali = Math.min(k.s.sol, k.s.sag) > 0.5;
+      if (kapali) { if (!m.kapaliBasi) m.kapaliBasi = t; m.kapaIlerleme = (t - m.kapaliBasi) / S.tikKapatMs; }
+      else {
+        const sure = m.kapaliBasi ? t - m.kapaliBasi : 0;
+        kapamaTik = sure >= S.tikKapatMs && sure < 2500 && t - m.sonTik >= S.tikAra;
+        m.kapaliBasi = 0; m.kapaIlerleme = 0;
+      }
+    }
+    if (mod === "izgara") return G.gecerli ? izgaraIsle(t, kapamaTik) : null;
+    if (kapamaTik && G.gecerli && (mod !== "kilit" || m.kilitli)) {
+      m.sonTik = t;
+      const tik = { x: m.x, y: m.y };
+      if (mod === "kilit") m.kilitBirak();
+      return tik;
+    }
+    if (!G.gecerli || !k.f || !k.guvenilir) return null;
     const gx = G.x * W, gy = G.y * H;
-    if (mod === "izgara") return izgaraIsle(t);
 
     // baş açısı yumuşatma
     if (Number.isNaN(m.basD)) { m.basD = k.s.donus; m.basE = k.s.egim; }
@@ -677,6 +696,7 @@ function imlecMotoru(hedefler = () => []) {
 
     // bakıp bekle tıklaması
     m.ilerleme = 0;
+    if (S.tikYontem !== "bekle") return null;
     if (mod === "kilit" && !m.kilitli) return null;
     const esik = mod === "kilit" ? 8 : S.bekleEsik;
     if (t - m.sonTik < S.tikAra) { m.bekleX = m.x; m.bekleY = m.y; m.bekleBasi = t; return null; }
@@ -694,13 +714,19 @@ function imlecMotoru(hedefler = () => []) {
   };
 
   // Izgara: 1. aşamada bölge, içinde tek hedef varsa tıkla, yoksa yakınlaştır; 2. aşamada alt bölgeye tıkla.
-  function izgaraIsle(t) {
+  function izgaraIsle(t, kapamaTik) {
     const tk = m.takip;
     if (tk.cols !== P.cols || tk.rows !== P.rows) { tk.cols = P.cols; tk.rows = P.rows; tk.sifirla(); }
     const h = tk.guncelle(G.x, G.y, t);
-    m.ilerleme = (t - tk.basi) / S.bekleTikMs;
-    if (m.ilerleme < 1) return null;
-    m.ilerleme = 0;
+    if (S.tikYontem === "kapat") {
+      m.ilerleme = 0;
+      if (!kapamaTik || h < 0) return null;
+      m.sonTik = t;
+    } else {
+      m.ilerleme = (t - tk.basi) / S.bekleTikMs;
+      if (m.ilerleme < 1) return null;
+      m.ilerleme = 0;
+    }
     const c = h % tk.cols, r = Math.floor(h / tk.cols);
     if (m.asama === 1) {
       const alan = { x: (c * W) / tk.cols, y: (r * H) / tk.rows, w: W / tk.cols, h: H / tk.rows };
@@ -1075,8 +1101,8 @@ function tiklamaTesti() {
     ac() {
       sonraki();
       hud("Tıklama testi", $("aMod").value === "kilit"
-        ? "Sarı hedefe bak. Artı yanlış hedefteyse başını o yöne hafifçe çevirip geri getir, sonra bekle."
-        : "Sarı hedefe bakıp bekle. Gri hedefler tuzak.", "");
+        ? `Sarı hedefe bak. Artı yanlış hedefteyse başını o yöne hafifçe çevirip geri getir. ${S.tikYontem === "kapat" ? "Gözlerini yarım saniye kapatıp açarak tıkla." : "Sonra bekle."}`
+        : `Sarı hedefe bak, ${S.tikYontem === "kapat" ? "gözlerini yarım saniye kapatıp açarak tıkla" : "bekle"}. Gri hedefler tuzak.`, "");
     },
     kare(k, t) {
       if (!d.hedef) return;
