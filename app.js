@@ -8,7 +8,7 @@ const SANAL_MOD = ADRES.has("sanal");
 if (SANAL_MOD) window.SANAL = Object.fromEntries([...ADRES].filter(([k]) => k !== "sanal" && k !== "v").map(([k, v]) => [k, +v]));
 const { FaceLandmarker, HandLandmarker, FilesetResolver } = await import(SANAL_MOD ? "./sanal/sanal_goz.mjs" : "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs");
 
-const SURUM = "lab 32";
+const SURUM = "lab 33";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -969,6 +969,7 @@ function imlecMotoru(hedefler = () => []) {
     const sx = S.basTersX === "ters" ? 1 : -1, sy = S.basTersY === "ters" ? 1 : -1;
     const hx = kis(W / 2 + (sx * (d - m.basRefD) * W) / S.basAciX, 0, W - 1);
     const hy = kis(H / 2 + (sy * (e - m.basRefE) * H) / S.basAciY, 0, H - 1);
+    m.hamY = hy; // mıknatıssız yer (kaydırma bandı için)
     [m.x, m.y] = miknatis(hx, hy);
     if (kapamaTik) { m.sonTik = t; return { x: m.x, y: m.y }; }
     return bekleTik(t, S.bekleEsik, S.bekleTikMs);
@@ -1615,11 +1616,13 @@ function kaydirGuncelle(kd, t, dt, satir, hiza, enFazla, bolge = { ust: 0, alt: 
   kd.v = kd.v || 0;
   let surer = false;
   if (S.kaydirModu === "bakis") {
-    // Listenin alt / üst bandına bakınca o yöne kay; banda girdikten 300 ms sonra başla
-    const gy = G.y * H, b = S.bakisBant;
+    // Listenin alt / üst bandına bakınca o yöne kay; banda girdikten 300 ms sonra başla.
+    // Baş modunda bakış yerine baş imleci kullanılır (göz kalibrasyonu bozuksa liste kendiliğinden kaymasın).
+    const basla = kd.imlecY != null;
+    const gy = basla ? kd.imlecY : G.y * H, b = S.bakisBant, gecerli = basla || G.gecerli;
     let yon = 0, derin = 0;
-    if (G.gecerli && gy > bolge.alt - b && gy <= bolge.alt + 40) { yon = 1; derin = (gy - (bolge.alt - b)) / b; }
-    else if (G.gecerli && gy < bolge.ust + b && gy >= bolge.ust - 40) { yon = -1; derin = (bolge.ust + b - gy) / b; }
+    if (gecerli && gy > bolge.alt - b && gy <= bolge.alt + 40) { yon = 1; derin = (gy - (bolge.alt - b)) / b; }
+    else if (gecerli && gy < bolge.ust + b && gy >= bolge.ust - 40) { yon = -1; derin = (bolge.ust + b - gy) / b; }
     if (yon && yon === kd.bakisYon) {
       if (t - kd.bakisBasi > 300) { kd.off += yon * (0.25 + 0.75 * Math.min(1, derin)) * S.bakisHiz * dt; surer = true; }
     } else { kd.bakisYon = yon; kd.bakisBasi = t; }
@@ -1681,6 +1684,8 @@ function parmakTesti() {
   const SATIR = 80, SH = 56, UST = 90, HEDEF_SAYI = 4;
   const hedefler = Array.from({ length: HEDEF_SAYI }, (_, i) => 10 + Math.floor(Math.random() * (SATIR - 20)));
   const d = { off: 0, i: 0, bas: null, sonT: 0, oncekiOff: 0, sabitBasi: 0, basi: performance.now(), sureler: [], bitti: false };
+  // Baş modunda kaydırma baş imleciyle (imleç bantlara götürülür)
+  const basModu = $("aMod").value === "bas", im = basModu ? imlecMotoru() : null;
   const enFazla = () => Math.max(0, SATIR * SH - (H - UST - 60));
   function bitir() {
     d.bitti = true;
@@ -1696,6 +1701,7 @@ function parmakTesti() {
       if (d.bitti) return;
       const dt = d.sonT ? Math.min(0.1, (t - d.sonT) / 1000) : 0;
       d.sonT = t;
+      if (im) { im.guncelle(k, t); d.imlecY = im.hamY ?? null; }
       kaydirGuncelle(d, t, dt, SH, UST + SH / 2 - H / 2, enFazla(), { ust: UST, alt: H - 60 });
       // Hedef satır bantta ve kaydırma durmuşsa 0,8 sn sonra başarılı
       const merkez = UST + hedefler[d.i] * SH + SH / 2 - d.off;
@@ -1724,6 +1730,7 @@ function parmakTesti() {
       ctx.strokeStyle = RENK.mavi; ctx.lineWidth = 2;
       ctx.strokeRect(8, H / 2 - SH / 2, W - 16, SH);
       bakisBantCiz(d, UST, H - 60);
+      if (im) imlecCiz(im.x, im.y, false, 0);
       if (d.bas && EL.var) {
         // Joystick göstergesi: başlangıçtan parmağa çizgi
         ctx.strokeStyle = RENK.mavi; ctx.beginPath(); ctx.moveTo(W - 30, H / 2); ctx.lineTo(W - 30, H / 2 + (EL.y - d.bas.y) * H); ctx.stroke();
@@ -1827,14 +1834,16 @@ function telefonTesti() {
       d.sonT = t;
       // Kaydırma: iki parmak (liste ekranında)
       const iki = S.kaydirModu === "yumruk" ? EL.yumruk : S.kaydirModu !== "cimdik" && (EL.iki || (EL.var && t - EL.sonIki < 300));
+      d.imlecY = $("aMod").value === "bas" ? im.hamY ?? null : null;
       const kayiyor = d.ekran === "liste" && kaydirGuncelle(d, t, dt, SATIR, 0, listeBoyu(), { ust: UST + 60, alt: H - ALT });
       // Liste kayınca kilitli satır yerinden oynar: kilidi bırak
       if (kayiyor) im.kilitBirak();
-      if (kayiyor && S.kaydirModu === "bakis") return; // bakarak kayarken tıklama/kilit olmasın
       // Geri: açık avuç 0,6 sn
       if (EL.avuc && EL.avucBasi && t - EL.avucBasi > 600 && t - d.sonGeri > 1200) { d.sonGeri = t; geri(); }
       if (iki) return;
+      // İmleç kayarken de güncellenir (yoksa baş modunda bandın içinde donar), ama kayarken tıklama olmaz
       const tik = im.guncelle(k, t);
+      if (kayiyor && S.kaydirModu === "bakis") return;
       if (tik) tikla(tik);
     },
     ciz() {
