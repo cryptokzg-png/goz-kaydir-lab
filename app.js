@@ -3,7 +3,7 @@
 // buradaki ayarlar bulunduktan sonra uygulamaya aktarılır.
 import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const SURUM = "lab 5";
+const SURUM = "lab 6";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -526,6 +526,8 @@ function hud(baslik, alt, bilgi) {
 }
 
 function dugmeler(liste) {
+  // Bitiş ekranları düğme koyar: gizlenmiş yazıları geri getir.
+  hudUst.style.visibility = hudAltEl.style.visibility = "visible";
   const kap = $("hudDugmeler");
   kap.innerHTML = "";
   for (const [ad, fn, ana] of [...liste, ["Çık", sahneKapat]]) {
