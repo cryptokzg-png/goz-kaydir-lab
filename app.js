@@ -3,7 +3,7 @@
 // buradaki ayarlar bulunduktan sonra uygulamaya aktarılır.
 import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const SURUM = "lab 11";
+const SURUM = "lab 12";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -37,6 +37,8 @@ const AYAR_TANIM = [
   { k: "kilitKazanc", ad: "Baş ince ayar hızı (px/derece)", min: 4, max: 30, adim: 1, v: 12 },
   { k: "kilitOlu", ad: "Baş ölü bölgesi (derece)", min: 0, max: 2, adim: 0.1, v: 0.6 },
   { k: "kilitCikis", ad: "Kilidi açma uzaklığı (px)", min: 60, max: 250, adim: 10, v: 130 },
+  { k: "atlaYaricap", ad: "Kilitte aday hedef yarıçapı (px)", min: 40, max: 250, adim: 10, v: 130, not: "Kilitlenince bu mesafedeki hedeflerden bakışa en yakını seçilir; başla komşulara atlanır." },
+  { k: "atlaEsik", ad: "Atlama için baş hareketi (derece)", min: 1, max: 8, adim: 0.5, v: 3, not: "Başı bu kadar çevirip geri getirince yandaki hedefe geçer." },
   { k: "basTersX", ad: "Baş yönü sağ-sol", secenek: [["normal", "Normal"], ["ters", "Ters"]], v: "normal" },
   { k: "basTersY", ad: "Baş yönü yukarı-aşağı", secenek: [["normal", "Normal"], ["ters", "Ters"]], v: "normal" },
   { b: "Tıklama (bakıp bekle)" },
@@ -610,14 +612,14 @@ function imlecMotoru(hedefler = () => []) {
     x: W / 2, y: H / 2, kilitli: false, ilerleme: 0, asama: 1, zoom: null,
     takip: new HucreTakip(P.cols, P.rows),
     basD: NaN, basE: 0, refD: 0, refE: 0, kilitX: 0, kilitY: 0,
-    sabitX: -1e4, sabitY: -1e4, sabitBasi: 0, uzakBasi: 0,
+    sabitX: -1e4, sabitY: -1e4, sabitBasi: 0, uzakBasi: 0, secili: null, hazir: true,
     bekleX: -1e4, bekleY: -1e4, bekleBasi: 0, tetik: false, sonTik: -1e9,
   };
   const miknatis = (x, y) => {
     const h = S.miknatis === "acik" ? yakinHedef(x, y, hedefler()) : null;
     return h ? [h.x, h.y] : [x, y];
   };
-  m.kilitBirak = () => { m.kilitli = false; m.sabitX = -1e4; m.uzakBasi = 0; };
+  m.kilitBirak = () => { m.kilitli = false; m.sabitX = -1e4; m.uzakBasi = 0; m.secili = null; };
   m.zoomBitir = () => { m.asama = 1; m.zoom = null; m.takip.sifirla(); };
 
   /** @returns {x,y} tıklama olduysa */
@@ -634,12 +636,34 @@ function imlecMotoru(hedefler = () => []) {
 
     if (mod === "goz") { [m.x, m.y] = miknatis(gx, gy); }
     else if (!m.kilitli) {
-      [m.x, m.y] = miknatis(gx, gy);
+      m.x = gx; m.y = gy; // kilitte mıknatıs yok: aday seçimini kilit kendisi yapar
       if (Math.hypot(gx - m.sabitX, gy - m.sabitY) > S.kilitYaricap) { m.sabitX = gx; m.sabitY = gy; m.sabitBasi = t; }
       else if (t - m.sabitBasi >= S.kilitSabitMs) {
-        m.kilitli = true; m.kilitX = m.x; m.kilitY = m.y; m.refD = m.basD; m.refE = m.basE; m.uzakBasi = 0;
+        m.kilitli = true; m.kilitX = m.x; m.kilitY = m.y; m.refD = m.basD; m.refE = m.basE; m.uzakBasi = 0; m.hazir = true;
+        // Atlamalı kilit: yakında hedef varsa bakışa en yakın olanın tam ortasına otur
+        const yakin = hedefler().filter((h) => Math.hypot(h.x - gx, h.y - gy) < S.atlaYaricap).sort((a, b) => Math.hypot(a.x - gx, a.y - gy) - Math.hypot(b.x - gx, b.y - gy));
+        m.secili = yakin[0] || null;
+        if (m.secili) { m.x = m.secili.x; m.y = m.secili.y; }
         m.bekleX = m.x; m.bekleY = m.y; m.bekleBasi = t; m.tetik = false;
       }
+    } else if (m.secili) {
+      // Baş küçük bir hareketle bir yöne çevrilip geri gelince o yöndeki komşu hedefe atla
+      const sx = S.basTersX === "ters" ? -1 : 1, sy = S.basTersY === "ters" ? 1 : -1;
+      const vx = sx * (m.basD - m.refD), vy = sy * (m.basE - m.refE), v = Math.hypot(vx, vy);
+      if (m.hazir && v > S.atlaEsik) {
+        const ux = vx / v, uy = vy / v, s0 = m.secili;
+        const komsu = hedefler().filter((h) => h !== s0).map((h) => {
+          const dx = h.x - s0.x, dy = h.y - s0.y, d = Math.hypot(dx, dy);
+          return { h, d, cos: d ? (dx * ux + dy * uy) / d : -1 };
+        }).filter((o) => o.cos > 0.5 && o.d < S.atlaYaricap * 2).sort((a, b) => a.d / a.cos - b.d / b.cos)[0];
+        if (komsu) { m.secili = komsu.h; m.bekleX = -1e4; }
+        m.hazir = false;
+      } else if (!m.hazir && v < S.atlaEsik * 0.4) m.hazir = true;
+      m.x = m.secili.x; m.y = m.secili.y;
+      if (Math.hypot(gx - m.x, gy - m.y) > S.kilitCikis + S.atlaYaricap) {
+        if (!m.uzakBasi) m.uzakBasi = t;
+        if (t - m.uzakBasi >= 350) { m.kilitBirak(); m.x = gx; m.y = gy; }
+      } else m.uzakBasi = 0;
     } else {
       const olu = (v) => (Math.abs(v) < S.kilitOlu ? 0 : v - Math.sign(v) * S.kilitOlu);
       const sx = S.basTersX === "ters" ? -1 : 1, sy = S.basTersY === "ters" ? 1 : -1;
@@ -1048,7 +1072,12 @@ function tiklamaTesti() {
     dugmeler([["Tekrar", () => { sahneKapat(); sahneAc(tiklamaTesti()); }, true]]);
   }
   return {
-    ac() { sonraki(); hud("Tıklama testi", "Sarı hedefe bakıp bekle. Gri hedefler tuzak.", ""); },
+    ac() {
+      sonraki();
+      hud("Tıklama testi", $("aMod").value === "kilit"
+        ? "Sarı hedefe bak. Artı yanlış hedefteyse başını o yöne hafifçe çevirip geri getir, sonra bekle."
+        : "Sarı hedefe bakıp bekle. Gri hedefler tuzak.", "");
+    },
     kare(k, t) {
       if (!d.hedef) return;
       const tik = im.guncelle(k, t);
