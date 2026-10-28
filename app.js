@@ -8,7 +8,7 @@ const SANAL_MOD = ADRES.has("sanal");
 if (SANAL_MOD) window.SANAL = Object.fromEntries([...ADRES].filter(([k]) => k !== "sanal" && k !== "v").map(([k, v]) => [k, +v]));
 const { FaceLandmarker, HandLandmarker, FilesetResolver } = await import(SANAL_MOD ? "./sanal/sanal_goz.mjs" : "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs");
 
-const SURUM = "lab 29";
+const SURUM = "lab 30";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -127,6 +127,12 @@ function ayarlariCiz() {
       inp.addEventListener("change", () => ayarDegisti(a.k, +inp.value));
     }
     if (a.not) { const s = document.createElement("small"); s.textContent = a.not; d.appendChild(s); }
+    // Otomatik model seçiminde set ve lambda elle değiştirilmez: soluk göster
+    if ((a.k === "ozellik" || a.k === "lambda") && S.lambdaOto === "acik") {
+      d.style.opacity = "0.45";
+      d.querySelectorAll("select,input").forEach((e) => (e.disabled = true));
+      const s = document.createElement("small"); s.textContent = `Otomatik seçimde kullanılmaz · şu an: ${P.set ?? "–"} λ${P.lam ?? "–"}`; d.appendChild(s);
+    }
     grup.appendChild(d);
   }
 }
@@ -136,6 +142,7 @@ let egitZamanlayici = 0;
 function ayarDegisti(k, v, surukleniyor = false) {
   S[k] = v;
   yaz("gk-ayar", S);
+  if (k === "lambdaOto") ayarlariCiz();
   if (k === "ozellik" || k === "lambda" || k === "lambdaOto") {
     clearTimeout(egitZamanlayici);
     egitZamanlayici = setTimeout(() => { profilEgit(true); }, surukleniyor ? 400 : 0);
