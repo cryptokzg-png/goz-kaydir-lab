@@ -3,7 +3,7 @@
 // buradaki ayarlar bulunduktan sonra uygulamaya aktarılır.
 import { FaceLandmarker, HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const SURUM = "lab 19";
+const SURUM = "lab 20";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -57,7 +57,7 @@ const AYAR_TANIM = [
   { k: "elAlan", ad: "Sadece parmak: kamera alanı", min: 0.3, max: 1, adim: 0.05, v: 0.6, not: "Kameranın ortasındaki bu oran tüm ekrana yayılır. Küçük = az el hareketiyle tüm ekran." },
   { k: "parmakHassas", ad: "Göz + parmak: ince ayar hızı", min: 0.3, max: 4, adim: 0.1, v: 1.2, not: "Parmağın kamerada kat ettiği yolun ekranda kaç katı kadar kayacağı." },
   { k: "kaydirModu", ad: "Kaydırma", secenek: [["cimdik", "Çimdikle sürükle (telefondaki gibi)"], ["joystick", "İki parmak joystick"], ["mesafe", "İki parmak mesafe"]], v: "cimdik", not: "Çimdikle sürükle: çimdikle tut, elini yukarı-aşağı götür, bırak. Hızlı bırakırsan liste kaymaya devam eder." },
-  { k: "surukleYon", ad: "Sürükleme yönü", secenek: [["telefon", "Telefondaki gibi (içerik eli izler)"], ["ters", "Ters (el aşağı = listede aşağı)"]], v: "telefon" },
+  { k: "surukleYon", ad: "Sürükleme yönü", secenek: [["ters", "El aşağı = listede aşağı"], ["telefon", "Telefondaki gibi (içerik eli izler)"]], v: "ters" },
   { k: "kaydirHiz", ad: "Joystick hızı (px/sn)", min: 200, max: 4000, adim: 100, v: 900, not: "Parmak, ölü bölgenin %10 ötesine çekildiğinde saniyedeki kaydırma. Hız karesel artar: az çekince çok yavaş." },
   { k: "kaydirOlu", ad: "Joystick ölü bölgesi", min: 0.01, max: 0.1, adim: 0.005, v: 0.04, not: "Parmak başlangıç noktasından bu kadar uzaklaşmadan kaydırma başlamaz." },
   { k: "kaydirOtur", ad: "Bırakınca satıra otur", secenek: [["acik", "Açık"], ["kapali", "Kapalı"]], v: "acik" },
@@ -72,7 +72,9 @@ function yaz(anahtar, v) { try { localStorage.setItem(anahtar, JSON.stringify(v)
 S = { ...VARSAYILAN, ...oku("gk-ayar", {}) };
 // Varsayılanı değişen ayarlar: eski kayıtlı değerleri bir kez yenile
 if ((S._surum || 0) < 18) { S.kaydirHiz = VARSAYILAN.kaydirHiz; S._surum = 18; yaz("gk-ayar", S); }
-if ((S._surum || 0) < 19) { S.kaydirModu = "cimdik"; S.kaydirMesafe = VARSAYILAN.kaydirMesafe; S._surum = 19; yaz("gk-ayar", S); }
+if ((S._surum || 0) < 20) { S.surukleYon = "ters"; }
+if ((S._surum || 0) < 19) { S.kaydirModu = "cimdik"; S.kaydirMesafe = VARSAYILAN.kaydirMesafe; }
+if ((S._surum || 0) < 20) { S._surum = 20; yaz("gk-ayar", S); }
 // Eski sürümden kalan seçenek değerleri
 if (!AYAR_TANIM.find((a) => a.k === "ogren").secenek.some(([v]) => v === S.ogren)) S.ogren = VARSAYILAN.ogren;
 
