@@ -3,7 +3,7 @@
 // buradaki ayarlar bulunduktan sonra uygulamaya aktarılır.
 import { FaceLandmarker, HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const SURUM = "lab 22";
+const SURUM = "lab 23";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -21,8 +21,8 @@ const AYAR_TANIM = [
   { k: "sicramaEsik", ad: "Sıçrama süzgeci (ekranın oranı)", min: 0.05, max: 0.6, adim: 0.01, v: 0.2, not: "Bundan büyük ani sıçramalar onaylanmadan kabul edilmez." },
   { k: "sicramaKare", ad: "Sıçrama onayı (kare)", min: 0, max: 3, adim: 1, v: 1, not: "Büyük sıçramanın kabul edilmesi için kaç kare daha aynı yerde kalmalı. 0 = süzgeç kapalı." },
   { b: "Model" },
-  { k: "ozellik", ad: "Göz özellikleri", secenek: [["yeni", "Yeni (uzaklık + kapak, 10)"], ["eski", "Eski (6)"], ["goz", "Sadece göz (baş yok)"]], v: "yeni", not: "Değiştirince model aynı örneklerle yeniden eğitilir: farkı hemen ölçebilirsin." },
-  { k: "lambda", ad: "Düzenleme (lambda)", min: 0.002, max: 1, adim: 0.002, v: 0.02, not: "Yüksek = daha kararlı ama daha az esnek model." },
+  { k: "ozellik", ad: "Göz özellikleri", secenek: [["yeni", "Yeni (uzaklık + kapak, 10)"], ["eski", "Eski (6)"], ["goz", "Sadece göz (baş yok)"]], v: "goz", not: "Değiştirince model aynı örneklerle yeniden eğitilir: farkı hemen ölçebilirsin." },
+  { k: "lambda", ad: "Düzenleme (lambda)", min: 0.002, max: 1, adim: 0.002, v: 0.5, not: "Yüksek = daha kararlı ama daha az esnek model." },
   { k: "izgara", ad: "Izgara", secenek: [["oto", "Otomatik"], ["2x3", "2×3"], ["2x4", "2×4"], ["3x3", "3×3"], ["3x4", "3×4"]], v: "oto" },
   { k: "bolgeMs", ad: "Bölge değişme süresi (ms)", min: 0, max: 1000, adim: 50, v: 300 },
   { b: "Kalibrasyon" },
@@ -1575,8 +1575,14 @@ function telefonTesti() {
 
 // ------------------------------------------------------------------ sonuçlar
 let sonuclar = oku("gk-sonuc", []);
+// Sonuç tablosunda yerel saat (toISOString UTC verir)
+function yerelZaman(d) {
+  const iki = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${iki(d.getMonth() + 1)}-${iki(d.getDate())} ${iki(d.getHours())}:${iki(d.getMinutes())}`;
+}
+
 function sonucEkle(tur, ozet, yazi) {
-  sonuclar.unshift({ zaman: new Date().toISOString().slice(0, 16).replace("T", " "), tur, mod: $("aMod").value, ozet, yazi, ayar: { ...S }, ornek: P.ornekler.length });
+  sonuclar.unshift({ zaman: yerelZaman(new Date()), tur, mod: $("aMod").value, ozet, yazi, ayar: { ...S }, ornek: P.ornekler.length });
   sonuclar = sonuclar.slice(0, 50);
   yaz("gk-sonuc", sonuclar);
   sonucCiz();
