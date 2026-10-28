@@ -8,7 +8,7 @@ const SANAL_MOD = ADRES.has("sanal");
 if (SANAL_MOD) window.SANAL = Object.fromEntries([...ADRES].filter(([k]) => k !== "sanal" && k !== "v").map(([k, v]) => [k, +v]));
 const { FaceLandmarker, HandLandmarker, FilesetResolver } = await import(SANAL_MOD ? "./sanal/sanal_goz.mjs" : "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs");
 
-const SURUM = "lab 31";
+const SURUM = "lab 32";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -47,6 +47,8 @@ const AYAR_TANIM = [
   { k: "atlaEsik", ad: "Atlama için baş hareketi (derece)", min: 1, max: 8, adim: 0.5, v: 3, not: "Başı bu kadar çevirip geri getirince yandaki hedefe geçer." },
   { k: "basTersX", ad: "Baş yönü sağ-sol", secenek: [["normal", "Normal"], ["ters", "Ters"]], v: "normal" },
   { k: "basTersY", ad: "Baş yönü yukarı-aşağı", secenek: [["normal", "Normal"], ["ters", "Ters"]], v: "normal" },
+  { k: "basAciX", ad: "Baş modu: ekran genişliği için baş dönüşü (derece)", min: 8, max: 50, adim: 1, v: 24, not: "Başını bu kadar sağdan sola çevirince imleç ekranın bir ucundan öbürüne gider. Küçük = az hareket, daha hassasiyetsiz." },
+  { k: "basAciY", ad: "Baş modu: ekran yüksekliği için baş eğimi (derece)", min: 8, max: 50, adim: 1, v: 24 },
   { b: "Tıklama" },
   { k: "tikYontem", ad: "Tıklama yöntemi", secenek: [["kapat", "Gözleri kapat"], ["cimdik", "Parmak çimdiği (başparmak + işaret)"], ["bekle", "Bakıp bekle"]], v: "kapat", not: "Gözleri kapat: iki gözü kısa bir süre kapatıp açınca tıklar (normal göz kırpmayla karışmaz)." },
   { k: "tikKapatMs", ad: "Gözleri kapalı tutma süresi (ms)", min: 250, max: 1200, adim: 50, v: 500 },
@@ -72,6 +74,7 @@ const AYAR_TANIM = [
   { k: "kaydirOtur", ad: "Bırakınca satıra otur", secenek: [["acik", "Açık"], ["kapali", "Kapalı"]], v: "acik" },
   { k: "kaydirMesafe", ad: "Sürükleme / mesafe katsayısı", min: 1, max: 10, adim: 0.5, v: 3, not: "El kameranın tamamı kadar hareket ederse liste kaç ekran boyu kayar." },
   { b: "Performans" },
+  { k: "kameraCoz", ad: "Kamera çözünürlüğü", secenek: [["640", "640×480"], ["1280", "1280×720 (göz daha ayrıntılı)"]], v: "640", not: "Yüksek çözünürlükte yüz görüntüde iki kat büyük: göz bebeği ölçümü daha az gürültülü olabilir, kare hızı düşebilir. Değiştirince kamera yeniden açılır; yeniden kalibre et." },
   { k: "gpu", ad: "Yüz modeli işlemcisi", secenek: [["cpu", "CPU"], ["gpu", "GPU"]], v: "cpu", not: "GPU daha yüksek kare hızı verebilir; değiştirince model yeniden yüklenir." },
 ];
 const VARSAYILAN = Object.fromEntries(AYAR_TANIM.filter((a) => a.k).map((a) => [a.k, a.v]));
@@ -150,6 +153,7 @@ function ayarDegisti(k, v, surukleniyor = false) {
   if (k === "izgara") profilEgit(false);
   if (k === "kaymaTur") profilCiz();
   if (k === "gpu" && !surukleniyor) modelYukle();
+  if (k === "kameraCoz" && akim) { try { akim.getTracks().forEach((x) => x.stop()); } catch {} kameraCanlandir(); }
 }
 
 // ------------------------------------------------------------------ göz modeli (Kotlin: GozModeli)
@@ -501,7 +505,8 @@ async function modelYukle() {
 
 // Sanal modda gerçek kamera yerine sürekli değişen bir tuval akışı (video kareleri ilerlesin diye)
 function kameraAc() {
-  if (!SANAL_MOD) return navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+  const [gw, gy] = S.kameraCoz === "1280" ? [1280, 720] : [640, 480];
+  if (!SANAL_MOD) return navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: gw }, height: { ideal: gy } }, audio: false });
   const c = document.createElement("canvas"); c.width = 64; c.height = 48;
   const x = c.getContext("2d");
   let i = 0;
@@ -514,6 +519,7 @@ async function kameraBaslat() {
     video.srcObject = akim;
     await video.play();
     $("bKamera").textContent = "Kamera açık";
+    video.addEventListener("loadedmetadata", () => { $("kameraNot").textContent = `Kamera ${video.videoWidth}×${video.videoHeight}. Görüntü telefonda kalır, hiçbir yere gönderilmez.`; });
     $("bKamera").disabled = true;
     for (const b of ["bKalibre", "bCanli", "bIsabet", "bKilitTest", "bDokunKal", "bDokunEkle", "bBasKal", "bParmakTest", "bTelefonTest"]) $(b).disabled = false;
     requestAnimationFrame(dongu);
@@ -844,6 +850,7 @@ function imlecMotoru(hedefler = () => []) {
     basD: NaN, basE: 0, refD: 0, refE: 0, kilitX: 0, kilitY: 0,
     sabitX: -1e4, sabitY: -1e4, sabitBasi: 0, uzakBasi: 0, secili: null, hazir: true,
     bekleX: -1e4, bekleY: -1e4, bekleBasi: 0, tetik: false, sonTik: -1e9,
+    bfD: new OneEuro(), bfE: new OneEuro(), basRefD: null, basRefE: null, ortala: false,
   };
   const miknatis = (x, y) => {
     const h = S.miknatis === "acik" ? yakinHedef(x, y, hedefler()) : null;
@@ -863,6 +870,7 @@ function imlecMotoru(hedefler = () => []) {
       else {
         const sure = m.kapaliBasi ? t - m.kapaliBasi : 0;
         kapamaTik = sure >= S.tikKapatMs && sure < 2500 && t - m.sonTik >= S.tikAra;
+        if (sure >= 2500) m.ortala = true; // gözleri uzun kapatıp açmak: baş modunda nötr duruşu yeniden al
         m.kapaliBasi = 0; m.kapaIlerleme = 0;
       }
     }
@@ -890,6 +898,7 @@ function imlecMotoru(hedefler = () => []) {
       return bekleTik(t, S.bekleEsik, S.bekleTikMs);
     }
     if (S.kontrol === "parmak") { m.ilerleme = 0; return null; }
+    if (mod === "bas") return basIsle(k, t, kapamaTik);
     if (mod === "izgara") return G.gecerli ? izgaraIsle(t, kapamaTik) : null;
     if (kapamaTik && G.gecerli && (mod !== "kilit" || m.kilitli)) {
       m.sonTik = t;
@@ -949,6 +958,21 @@ function imlecMotoru(hedefler = () => []) {
     if (mod === "kilit" && !m.kilitli) { m.ilerleme = 0; return null; }
     return bekleTik(t, mod === "kilit" ? 8 : S.bekleEsik, mod === "kilit" ? S.kilitTikMs : S.bekleTikMs);
   };
+
+  // Baş modu (burunla fare gibi): başın ilk/nötr duruşa göre açısı imleci götürür. Göz kalibrasyonu gerekmez.
+  // Gözleri 2,5 sn'den uzun kapatıp açınca o anki duruş yeni orta olur.
+  function basIsle(k, t, kapamaTik) {
+    m.ilerleme = 0;
+    if (!k.yuz) return null;
+    const d = m.bfD.filtre(k.s.donus, t, 1.0, 0.3), e = m.bfE.filtre(k.s.egim, t, 1.0, 0.3);
+    if (m.basRefD == null || m.ortala) { m.basRefD = d; m.basRefE = e; m.ortala = false; }
+    const sx = S.basTersX === "ters" ? 1 : -1, sy = S.basTersY === "ters" ? 1 : -1;
+    const hx = kis(W / 2 + (sx * (d - m.basRefD) * W) / S.basAciX, 0, W - 1);
+    const hy = kis(H / 2 + (sy * (e - m.basRefE) * H) / S.basAciY, 0, H - 1);
+    [m.x, m.y] = miknatis(hx, hy);
+    if (kapamaTik) { m.sonTik = t; return { x: m.x, y: m.y }; }
+    return bekleTik(t, S.bekleEsik, S.bekleTikMs);
+  }
 
   // bakıp bekle tıklaması
   function bekleTik(t, esik, sure) {
@@ -1047,7 +1071,7 @@ function imlecMotoru(hedefler = () => []) {
       return;
     }
     hedefCiz?.(1);
-    if (G.gecerli) imlecCiz(m.x, m.y, mod === "kilit" && m.kilitli, m.ilerleme);
+    if (G.gecerli || mod === "bas") imlecCiz(m.x, m.y, mod === "kilit" && m.kilitli, m.ilerleme);
   };
   return m;
 }
@@ -1561,7 +1585,7 @@ function tiklamaTesti() {
     },
     ciz() {
       const t = performance.now();
-      if (!P.model && S.kontrol !== "parmak") { hud("Önce kalibre et (ya da Ayarlar → İmleç kontrolü: Sadece parmak)", "", ""); return; }
+      if (!P.model && S.kontrol !== "parmak" && $("aMod").value !== "bas") { hud("Önce kalibre et (ya da imleç modu: Baş)", "", ""); return; }
       if (d.hedef) hudKacin([[d.hedef.x, d.hedef.y], ...d.tuzak.map((h) => [h.x, h.y])]);
       if (d.hedef) hud(`Tıklama testi · ${d.sira + 1} / ${SAYI}`, null, `${d.dogru} doğru · ${d.yanlis} yanlış · kalan ${Math.max(0, (ZAMAN - (t - d.basi)) / 1000).toFixed(0)} sn`);
       im.ciz((olcek) => {
