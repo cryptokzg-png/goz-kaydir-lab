@@ -1,9 +1,14 @@
 // GözKaydır Lab — Android uygulamasındaki göz takip hattının tarayıcı sürümü.
 // Özellikler, model, filtre, kırpma eşiği, kalibrasyon ve imleç modları Kotlin koduyla birebir aynı mantıkta;
 // buradaki ayarlar bulunduktan sonra uygulamaya aktarılır.
-import { FaceLandmarker, HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+// ?sanal=1: kamera ve MediaPipe yerine sanal göz (sanal/sanal_goz.mjs). Sanal kullanıcı ekrandaki sarı hedefe bakar;
+// gürültü/kayma ayarları adresten verilir (ör. ?sanal=1&basKayma=4&irisGurultu=0.9). Kayıtlar gerçek profilden ayrı tutulur.
+const ADRES = new URLSearchParams(location.search);
+const SANAL_MOD = ADRES.has("sanal");
+if (SANAL_MOD) window.SANAL = Object.fromEntries([...ADRES].filter(([k]) => k !== "sanal" && k !== "v").map(([k, v]) => [k, +v]));
+const { FaceLandmarker, HandLandmarker, FilesetResolver } = await import(SANAL_MOD ? "./sanal/sanal_goz.mjs" : "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs");
 
-const SURUM = "lab 28";
+const SURUM = "lab 29";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -22,6 +27,7 @@ const AYAR_TANIM = [
   { k: "sicramaKare", ad: "Sıçrama onayı (kare)", min: 0, max: 3, adim: 1, v: 1, not: "Büyük sıçramanın kabul edilmesi için kaç kare daha aynı yerde kalmalı. 0 = süzgeç kapalı." },
   { b: "Model" },
   { k: "ozellik", ad: "Göz özellikleri", secenek: [["yeni", "Yeni (uzaklık + kapak, 10)"], ["eski", "Eski (6)"], ["goz", "Sadece göz (baş yok)"]], v: "goz", not: "Değiştirince model aynı örneklerle yeniden eğitilir: farkı hemen ölçebilirsin." },
+  { k: "lambdaOto", ad: "Model seçimi", secenek: [["acik", "Otomatik (özellik seti + lambda, kalibrasyondan)"], ["kapali", "Elle (yukarıdaki set, aşağıdaki lambda)"]], v: "acik", not: "Otomatik: kalibrasyon noktalarını (ve baş hareketi noktalarını) birer birer dışarıda bırakarak en az hata veren özellik seti ve lambda seçilir. Fazla yüksek lambda tahminleri ortaya sıkıştırır; baş ölçümü olmayan set duruş değişince kayar." },
   { k: "lambda", ad: "Düzenleme (lambda)", min: 0.002, max: 1, adim: 0.002, v: 0.5, not: "Yüksek = daha kararlı ama daha az esnek model." },
   { k: "izgara", ad: "Izgara", secenek: [["oto", "Otomatik"], ["2x3", "2×3"], ["2x4", "2×4"], ["3x3", "3×3"], ["3x4", "3×4"]], v: "oto" },
   { k: "bolgeMs", ad: "Bölge değişme süresi (ms)", min: 0, max: 1000, adim: 50, v: 300 },
@@ -70,8 +76,9 @@ const AYAR_TANIM = [
 ];
 const VARSAYILAN = Object.fromEntries(AYAR_TANIM.filter((a) => a.k).map((a) => [a.k, a.v]));
 let S = { ...VARSAYILAN };
-function oku(anahtar, yedek) { try { const v = localStorage.getItem(anahtar); return v ? JSON.parse(v) : yedek; } catch { return yedek; } }
-function yaz(anahtar, v) { try { localStorage.setItem(anahtar, JSON.stringify(v)); } catch {} }
+const ONEK = SANAL_MOD ? "sanal-" : "";
+function oku(anahtar, yedek) { try { const v = localStorage.getItem(ONEK + anahtar); return v ? JSON.parse(v) : yedek; } catch { return yedek; } }
+function yaz(anahtar, v) { try { localStorage.setItem(ONEK + anahtar, JSON.stringify(v)); } catch {} }
 S = { ...VARSAYILAN, ...oku("gk-ayar", {}) };
 // Varsayılanı değişen ayarlar: eski kayıtlı değerleri bir kez yenile
 if ((S._surum || 0) < 18) { S.kaydirHiz = VARSAYILAN.kaydirHiz; S._surum = 18; yaz("gk-ayar", S); }
@@ -129,7 +136,7 @@ let egitZamanlayici = 0;
 function ayarDegisti(k, v, surukleniyor = false) {
   S[k] = v;
   yaz("gk-ayar", S);
-  if (k === "ozellik" || k === "lambda") {
+  if (k === "ozellik" || k === "lambda" || k === "lambdaOto") {
     clearTimeout(egitZamanlayici);
     egitZamanlayici = setTimeout(() => { profilEgit(true); }, surukleniyor ? 400 : 0);
   }
@@ -213,14 +220,15 @@ function sirt(X, y, w, lambdaOran = S.lambda) {
 const ADAYLAR = [[2, 3], [2, 4], [3, 3], [3, 4]];
 const anahtarXY = (o) => Math.floor(o.x * 1000) * 10000 + Math.floor(o.y * 1000);
 
-function degerlendir(ornekler, W, H) {
-  const kal = ornekler.filter((o) => o.t === 0);
+function degerlendir(ornekler, W, H, lam = S.lambda, set = S.ozellik) {
+  // Baş hareketi noktaları (t: 3) da sınanır: baş oynayınca bozulan model seçilmesin
+  const kal = ornekler.filter((o) => o.t === 0 || o.t === 3);
   const gruplar = new Map();
   for (const o of kal) { const a = anahtarXY(o); if (!gruplar.has(a)) gruplar.set(a, []); gruplar.get(a).push(o); }
   if (gruplar.size < 6) return null;
   const hatalar = [];
   for (const [a, grup] of gruplar) {
-    const m = egit(ornekler.filter((o) => anahtarXY(o) !== a));
+    const m = egit(ornekler.filter((o) => anahtarXY(o) !== a), set, lam);
     if (!m) continue;
     for (let i = 0; i < grup.length; i += 5) {
       const parca = grup.slice(i, i + 5);
@@ -322,11 +330,26 @@ function bilinenBakis(nx, ny, oran = S.kaymaHiz, ham = [G.fx, G.fy]) {
 
 function profilKaydet() { yaz("gk-profil", P.ornekler); }
 
+const LAMBDA_ADAY = [0.005, 0.02, 0.05, 0.1, 0.2, 0.5];
+/** Kalibrasyon noktalarını birer birer dışarıda bırakarak (LOO) en az hata veren özellik seti ve lambda. */
+function modelSec(ornekler) {
+  let en = null;
+  for (const set of ["goz", "eski", "yeni"]) for (const lam of LAMBDA_ADAY) {
+    const d = degerlendir(ornekler, innerWidth, innerHeight, lam, set);
+    if (d && (!en || d.hataPx < en.hataPx)) en = { set, lam, hataPx: d.hataPx };
+  }
+  return en;
+}
+P.lam = S.lambda; P.set = S.ozellik;
 function profilEgit(degerlendirmeYap) {
-  P.model = egit(P.ornekler);
+  if (S.lambdaOto === "acik") {
+    if (degerlendirmeYap || !P.secim) P.secim = P.ornekler.length >= 20 ? modelSec(P.ornekler) : null;
+    P.lam = P.secim?.lam ?? S.lambda; P.set = P.secim?.set ?? S.ozellik;
+  } else { P.lam = S.lambda; P.set = S.ozellik; }
+  P.model = egit(P.ornekler, P.set, P.lam);
   const u = P.ornekler.filter((o) => o.t === 0).map((o) => o.f[UZAKLIK]).sort((a, b) => a - b);
   P.aralik = u.length < 20 ? null : [u[Math.floor(u.length / 20)], u[u.length - 1 - Math.floor(u.length / 20)]];
-  if (degerlendirmeYap) P.deger = P.model ? degerlendir(P.ornekler, innerWidth, innerHeight) : null;
+  if (degerlendirmeYap) P.deger = P.model ? degerlendir(P.ornekler, innerWidth, innerHeight, P.lam, P.set) : null;
   if (S.izgara !== "oto") [P.cols, P.rows] = S.izgara.split("x").map(Number);
   else if (P.deger) [P.cols, P.rows] = izgaraSec(P.deger.isabet);
   profilCiz();
@@ -340,7 +363,7 @@ function profilCiz() {
   const ar = P.aralik ? ` · uzaklık ${P.aralik[0].toFixed(0)}–${P.aralik[1].toFixed(0)} cm` : "";
   const ky = Math.round(P.kayma.x * innerWidth), kd = Math.round(P.kayma.y * innerHeight);
   const af = S.kaymaTur === "afin" && P.afin ? ` · afin: ölçek ${P.afin.ax[1].toFixed(2)} / ${P.afin.ay[2].toFixed(2)} (${P.afin.n} bilinen bakış)` : "";
-  $("profilOzet").textContent = `${kal} kalibrasyon + ${duz} düzeltme${bas ? ` + ${bas} baş hareketi` : ""} örneği · özellik: ${S.ozellik} λ${S.lambda}${ar} · seçili ızgara ${P.cols}×${P.rows}` +
+  $("profilOzet").textContent = `${kal} kalibrasyon + ${duz} düzeltme${bas ? ` + ${bas} baş hareketi` : ""} örneği · model: ${P.set} λ${P.lam}${S.lambdaOto === "acik" ? " (otomatik)" : ""}${ar} · seçili ızgara ${P.cols}×${P.rows}` +
     ` · kayma düzeltmesi ${ky} / ${kd} px${af}` + (P.model ? "" : " · model eğitilemedi");
   if (!P.deger) { $("izgaraTablo").innerHTML = ""; return; }
   const d = P.deger;
@@ -460,7 +483,7 @@ async function modelYukle() {
       outputFaceBlendshapes: true,
       outputFacialTransformationMatrixes: true,
     });
-    $("surum").textContent = `${SURUM} · ${S.gpu === "gpu" ? "GPU" : "CPU"}`;
+    $("surum").textContent = `${SURUM} · ${SANAL_MOD ? "SANAL GÖZ" : S.gpu === "gpu" ? "GPU" : "CPU"}`;
     $("bKamera").disabled = false;
   } catch (e) {
     $("surum").textContent = "model yüklenemedi";
@@ -468,9 +491,18 @@ async function modelYukle() {
   }
 }
 
+// Sanal modda gerçek kamera yerine sürekli değişen bir tuval akışı (video kareleri ilerlesin diye)
+function kameraAc() {
+  if (!SANAL_MOD) return navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+  const c = document.createElement("canvas"); c.width = 64; c.height = 48;
+  const x = c.getContext("2d");
+  let i = 0;
+  setInterval(() => { x.fillStyle = `rgb(${(i += 7) % 255},90,90)`; x.fillRect(0, 0, 64, 48); }, 33);
+  return Promise.resolve(c.captureStream(30));
+}
 async function kameraBaslat() {
   try {
-    akim = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+    akim = await kameraAc();
     video.srcObject = akim;
     await video.play();
     $("bKamera").textContent = "Kamera açık";
@@ -524,7 +556,7 @@ async function kameraCanlandir() {
   if (!iz || iz.readyState === "ended") {
     try { akim.getTracks().forEach((x) => x.stop()); } catch {}
     try {
-      akim = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+      akim = await kameraAc();
       video.srcObject = akim;
     } catch (e) { $("kameraNot").textContent = "Kamera yeniden açılamadı: " + (e?.message || e); return; }
   }
@@ -1015,10 +1047,13 @@ function imlecMotoru(hedefler = () => []) {
 // ------------------------------------------------------------------ kalibrasyon (Kotlin: KalibrasyonActivity)
 function kalibrasyon() {
   const k4 = [0.1, 0.37, 0.63, 0.9];
-  const tum = k4.flatMap((y, r) => (r % 2 === 0 ? k4 : [...k4].reverse()).map((x) => [x, y]));
+  // Rastgele sıra: baş ve duruşun zamanla yavaş değişimi hedefin yeriyle ilişkilenmesin (sırayla gösterince
+  // model bu yavaş değişimi konum sanıp öğreniyordu).
+  const karistir = (a) => { const b = [...a]; for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; };
+  const tum = karistir(k4.flatMap((y) => k4.map((x) => [x, y])));
   const dama = tum.filter(([x, y]) => (k4.indexOf(x) + k4.indexOf(y)) % 2 === 0);
   const asamali = S.uzaklikAsama === "acik";
-  const noktalar = asamali ? [...tum, ...dama, ...[...dama].reverse()] : tum;
+  const noktalar = asamali ? [...tum, ...karistir(dama), ...karistir(dama)] : tum;
   const normalSon = 16, yakinSon = asamali ? 24 : 16;
   const durum = { sira: -1, basi: performance.now(), bekleme: 0, uygunBasi: 0, toplanan: [], nTop: 0, nSay: 0, sonU: 0 };
 
@@ -1118,10 +1153,10 @@ function basKalibrasyonu() {
     if (d.toplanan.length < 30) { hud("Yeterli ölçüm alınamadı", "Yüzünün göründüğünden emin olup tekrar dene.", ""); dugmeler([]); return; }
     P.ornekler = [...P.ornekler.filter((o) => o.t !== 3), ...d.toplanan];
     profilKaydet();
-    const onceki = S.ozellik;
-    ayarDegisti("ozellik", "yeni"); ayarlariCiz();
+    const onceki = `${P.set} λ${P.lam}`;
+    if (S.lambdaOto === "acik") profilEgit(true); else { ayarDegisti("ozellik", "yeni"); ayarlariCiz(); }
     hud("Baş hareketi öğrenildi", `${d.toplanan.length} örnek · baş ±${aralik(d.don).toFixed(0)}° yatay, ±${aralik(d.egim).toFixed(0)}° dikey`,
-      `Model "Yeni" özellik setine geçti (baş ölçümlü; önceki: ${onceki}).\nİsabet testini farklı bir oturuşla ya da başını biraz çevirerek yap; ` +
+      `Model: ${P.set} λ${P.lam} (önceki: ${onceki}).\nİsabet testini farklı bir oturuşla ya da başını biraz çevirerek yap; ` +
       `sonuçtaki MODEL KARŞILAŞTIRMA, baş telafisinin işe yarayıp yaramadığını gösterir (Yeni ile Göz satırlarını karşılaştır).`);
     dugmeler([["İsabet testi", () => { sahneKapat(); sahneAc(isabetTesti()); }, true]]);
   }
@@ -1238,7 +1273,7 @@ function canli() {
     const grup = new Set(oturum.pop());
     hatalar.pop();
     P.ornekler = P.ornekler.filter((o) => !grup.has(o));
-    profilKaydet(); P.model = egit(P.ornekler);
+    profilKaydet(); P.model = egit(P.ornekler, P.set, P.lam);
   }
   return {
     ac() { dugmeler([["Son düzeltmeyi geri al", geriAl]]); },
@@ -1261,7 +1296,7 @@ function canli() {
       let fazla = P.ornekler.filter((o) => o.t === 2).length - 600;
       if (fazla > 0) P.ornekler = P.ornekler.filter((o) => !(o.t === 2 && fazla-- > 0));
       oturum.push(grup);
-      P.model = egit(P.ornekler);
+      P.model = egit(P.ornekler, P.set, P.lam);
       profilKaydet();
     },
     ciz() {
@@ -1367,7 +1402,7 @@ function isabetTesti() {
     const egitimSeti = P.ornekler.filter((o) => o.t !== 2);
     const satirlar = [];
     for (const [set, ad] of [["yeni", "Yeni"], ["eski", "Eski"], ["goz", "Göz"]]) {
-      for (const lam of [0.02, 0.1, 0.5]) {
+      for (const lam of [0.005, 0.02, 0.1, 0.5]) {
         const m = egit(egitimSeti, set, lam);
         if (!m || !d.noktaOz.length) continue;
         const e = d.noktaOz.map((n) => {
@@ -1390,7 +1425,7 @@ function isabetTesti() {
     }
     const enIyi = satirlar[0];
     const enIyiyiSec = () => {
-      ayarDegisti("ozellik", enIyi.set); ayarDegisti("lambda", enIyi.lam);
+      ayarDegisti("lambdaOto", "kapali"); ayarDegisti("ozellik", enIyi.set); ayarDegisti("lambda", enIyi.lam);
       ayarlariCiz();
       hud("Seçildi", `Model: ${enIyi.ad}. Tekrar test ederek doğrula.`, null);
       dugmeler([["Tekrar test et", () => { sahneKapat(); sahneAc(isabetTesti()); }, true]]);
@@ -1405,7 +1440,7 @@ function isabetTesti() {
     };
     dugmeler([["Tekrar", () => { sahneKapat(); sahneAc(isabetTesti()); }, true],
       ["Haritayı göster / gizle", () => { d.harita = !d.harita; $("hudBilgiKutu").hidden = d.harita; hudUst.style.visibility = d.harita ? "hidden" : "visible"; }],
-      ...(enIyi && (enIyi.set !== S.ozellik || enIyi.lam !== S.lambda) ? [["En iyi modeli seç", enIyiyiSec]] : []),
+      ...(enIyi && (enIyi.set !== P.set || enIyi.lam !== P.lam) ? [["En iyi modeli seç", enIyiyiSec]] : []),
       ...(d.sonuc.length ? [["Düzeltmeyi öğret", () => {
         kaymaGuncelle(kx / W, ky / H, 1);
         // 9 nokta afin düzeltmeye de bilinen bakış olarak girer (sabit kayma yukarıda tamamen düzeltildi)
@@ -1502,7 +1537,7 @@ function tiklamaTesti() {
             P.ornekler.push(...G.sonOz.map((f) => ({ f: f.slice(), x: d.hedef.x / W, y: d.hedef.y / H, t: 1 })));
             let fazla = P.ornekler.filter((o) => o.t === 1).length - 300;
             if (fazla > 0) P.ornekler = P.ornekler.filter((o) => !(o.t === 1 && fazla-- > 0));
-            P.model = egit(P.ornekler); profilKaydet();
+            P.model = egit(P.ornekler, P.set, P.lam); profilKaydet();
           }
           d.dogru++; d.sureler.push(t - d.basi); d.sira++; d.sira >= SAYI ? bitir() : sonraki();
         }
