@@ -3,7 +3,7 @@
 // buradaki ayarlar bulunduktan sonra uygulamaya aktarılır.
 import { FaceLandmarker, HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const SURUM = "lab 17";
+const SURUM = "lab 18";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -57,7 +57,9 @@ const AYAR_TANIM = [
   { k: "elAlan", ad: "Sadece parmak: kamera alanı", min: 0.3, max: 1, adim: 0.05, v: 0.6, not: "Kameranın ortasındaki bu oran tüm ekrana yayılır. Küçük = az el hareketiyle tüm ekran." },
   { k: "parmakHassas", ad: "Göz + parmak: ince ayar hızı", min: 0.3, max: 4, adim: 0.1, v: 1.2, not: "Parmağın kamerada kat ettiği yolun ekranda kaç katı kadar kayacağı." },
   { k: "kaydirModu", ad: "Kaydırma (iki parmak)", secenek: [["joystick", "Joystick: çektikçe hızlanır"], ["mesafe", "Mesafe: çektiğin kadar"]], v: "joystick" },
-  { k: "kaydirHiz", ad: "Joystick hızı (px/sn)", min: 300, max: 6000, adim: 100, v: 2000, not: "Parmak, kameranın %10'u kadar çekildiğinde saniyedeki kaydırma." },
+  { k: "kaydirHiz", ad: "Joystick hızı (px/sn)", min: 200, max: 4000, adim: 100, v: 900, not: "Parmak, ölü bölgenin %10 ötesine çekildiğinde saniyedeki kaydırma. Hız karesel artar: az çekince çok yavaş." },
+  { k: "kaydirOlu", ad: "Joystick ölü bölgesi", min: 0.01, max: 0.1, adim: 0.005, v: 0.04, not: "Parmak başlangıç noktasından bu kadar uzaklaşmadan kaydırma başlamaz." },
+  { k: "kaydirOtur", ad: "Bırakınca satıra otur", secenek: [["acik", "Açık"], ["kapali", "Kapalı"]], v: "acik" },
   { k: "kaydirMesafe", ad: "Mesafe katsayısı", min: 1, max: 10, adim: 0.5, v: 4, not: "Parmak kameranın tamamı kadar inerse kaç ekran boyu kayar." },
   { b: "Performans" },
   { k: "gpu", ad: "Yüz modeli işlemcisi", secenek: [["cpu", "CPU"], ["gpu", "GPU"]], v: "cpu", not: "GPU daha yüksek kare hızı verebilir; değiştirince model yeniden yüklenir." },
@@ -67,6 +69,8 @@ let S = { ...VARSAYILAN };
 function oku(anahtar, yedek) { try { const v = localStorage.getItem(anahtar); return v ? JSON.parse(v) : yedek; } catch { return yedek; } }
 function yaz(anahtar, v) { try { localStorage.setItem(anahtar, JSON.stringify(v)); } catch {} }
 S = { ...VARSAYILAN, ...oku("gk-ayar", {}) };
+// Varsayılanı değişen ayarlar: eski kayıtlı değerleri bir kez yenile
+if ((S._surum || 0) < 18) { S.kaydirHiz = VARSAYILAN.kaydirHiz; S._surum = 18; yaz("gk-ayar", S); }
 // Eski sürümden kalan seçenek değerleri
 if (!AYAR_TANIM.find((a) => a.k === "ogren").secenek.some(([v]) => v === S.ogren)) S.ogren = VARSAYILAN.ogren;
 
@@ -1247,6 +1251,19 @@ function tiklamaTesti() {
   };
 }
 
+// Joystick: ölü bölgeden sonra karesel hız (az çekince hassas, çok çekince hızlı)
+function joystickHiz(dy) {
+  const a = Math.abs(dy) - S.kaydirOlu;
+  if (a <= 0) return 0;
+  return Math.sign(dy) * (a / 0.1) ** 2 * S.kaydirHiz;
+}
+// Kaydırma bitince en yakın satıra yumuşakça otur. hiza: satır başlarının hizalanacağı ofset kayması
+function satiraOtur(off, satir, hiza, dt) {
+  if (S.kaydirOtur !== "acik") return off;
+  const hedef = Math.round((off - hiza) / satir) * satir + hiza;
+  return off + (hedef - off) * Math.min(1, dt * 10);
+}
+
 // ------------------------------------------------------------------ parmak testi (kaydırma)
 // İki parmakla (işaret + orta) aşağı-yukarı kaydırarak istenen satırı ortadaki banda getir.
 function parmakTesti() {
@@ -1273,15 +1290,16 @@ function parmakTesti() {
         if (!d.bas) d.bas = { y: EL.y, off: d.off };
         const dy = EL.y - d.bas.y;
         if (S.kaydirModu === "joystick") {
-          const v = Math.abs(dy) < 0.02 ? 0 : ((dy - Math.sign(dy) * 0.02) / 0.1) * S.kaydirHiz;
+          const v = joystickHiz(dy);
           d.off += v * dt;
+          if (v === 0) d.off = satiraOtur(d.off, SH, UST + SH / 2 - H / 2, dt);
         } else d.off = d.bas.off + dy * S.kaydirMesafe * H;
-      } else d.bas = null;
+      } else { d.bas = null; d.off = satiraOtur(d.off, SH, UST + SH / 2 - H / 2, dt); }
       d.off = kis(d.off, 0, enFazla());
       // Hedef satır bantta ve kaydırma durmuşsa 0,8 sn sonra başarılı
       const merkez = UST + hedefler[d.i] * SH + SH / 2 - d.off;
       const bantta = Math.abs(merkez - H / 2) < SH / 2;
-      if (Math.abs(d.off - d.oncekiOff) > 1.5 || !bantta) d.sabitBasi = t;
+      if (Math.abs(d.off - d.oncekiOff) > 0.5 || !bantta) d.sabitBasi = t;
       d.oncekiOff = d.off;
       if (bantta && t - d.sabitBasi > 800) {
         d.sureler.push(t - d.basi);
@@ -1404,10 +1422,13 @@ function telefonTesti() {
       if (iki && d.ekran === "liste") {
         if (!d.bas) d.bas = { y: EL.y, off: d.off };
         const dy = EL.y - d.bas.y;
-        if (S.kaydirModu === "joystick") d.off += (Math.abs(dy) < 0.02 ? 0 : ((dy - Math.sign(dy) * 0.02) / 0.1) * S.kaydirHiz) * dt;
-        else d.off = d.bas.off + dy * S.kaydirMesafe * H;
+        if (S.kaydirModu === "joystick") {
+          const v = joystickHiz(dy);
+          d.off += v * dt;
+          if (v === 0) d.off = satiraOtur(d.off, SATIR, 0, dt);
+        } else d.off = d.bas.off + dy * S.kaydirMesafe * H;
         d.off = kis(d.off, 0, listeBoyu());
-      } else d.bas = null;
+      } else { d.bas = null; if (d.ekran === "liste") d.off = kis(satiraOtur(d.off, SATIR, 0, dt), 0, listeBoyu()); }
       // Geri: açık avuç 0,6 sn
       if (EL.avuc && EL.avucBasi && t - EL.avucBasi > 600 && t - d.sonGeri > 1200) { d.sonGeri = t; geri(); }
       if (iki) return;
