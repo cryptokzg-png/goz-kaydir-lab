@@ -3,7 +3,7 @@
 // buradaki ayarlar bulunduktan sonra uygulamaya aktarılır.
 import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const SURUM = "lab 13";
+const SURUM = "lab 14";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -667,7 +667,7 @@ function imlecMotoru(hedefler = () => []) {
       }
     } else if (m.secili) {
       // Baş küçük bir hareketle bir yöne çevrilip geri gelince o yöndeki komşu hedefe atla
-      const sx = S.basTersX === "ters" ? -1 : 1, sy = S.basTersY === "ters" ? 1 : -1;
+      const sx = S.basTersX === "ters" ? 1 : -1, sy = S.basTersY === "ters" ? 1 : -1;
       const vx = sx * (m.basD - m.refD), vy = sy * (m.basE - m.refE), v = Math.hypot(vx, vy);
       if (m.hazir && v > S.atlaEsik) {
         const ux = vx / v, uy = vy / v, s0 = m.secili;
@@ -685,7 +685,7 @@ function imlecMotoru(hedefler = () => []) {
       } else m.uzakBasi = 0;
     } else {
       const olu = (v) => (Math.abs(v) < S.kilitOlu ? 0 : v - Math.sign(v) * S.kilitOlu);
-      const sx = S.basTersX === "ters" ? -1 : 1, sy = S.basTersY === "ters" ? 1 : -1;
+      const sx = S.basTersX === "ters" ? 1 : -1, sy = S.basTersY === "ters" ? 1 : -1;
       m.x = kis(m.kilitX + sx * olu(m.basD - m.refD) * S.kilitKazanc, 0, W - 1);
       m.y = kis(m.kilitY + sy * olu(m.basE - m.refE) * S.kilitKazanc, 0, H - 1);
       if (Math.hypot(gx - m.x, gy - m.y) > S.kilitCikis) {
@@ -1080,7 +1080,7 @@ function isabetTesti() {
 
 // ------------------------------------------------------------------ tıklama testi
 function tiklamaTesti() {
-  const SAYI = 8, R = 18, ZAMAN = 15000;
+  const SAYI = 8, R = 18, ZAMAN = 25000;
   const pay = 50;
   const yeniHedef = () => ({ x: pay + Math.random() * (W - 2 * pay), y: pay + 60 + Math.random() * (H - 2 * pay - 180), r: R });
   // Izgara modunda yakınlaştırma anlamlı olsun diye yanına iki tuzak hedef koy
