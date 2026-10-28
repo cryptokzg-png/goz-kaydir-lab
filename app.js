@@ -3,7 +3,7 @@
 // buradaki ayarlar bulunduktan sonra uygulamaya aktarılır.
 import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const SURUM = "lab 2";
+const SURUM = "lab 3";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -304,6 +304,7 @@ async function kameraBaslat() {
 const isikTuval = document.createElement("canvas");
 isikTuval.width = 16; isikTuval.height = 12;
 const isikCtx = isikTuval.getContext("2d", { willReadFrequently: true });
+let sonKareZamani = 0;
 let isik = 0, kareSay = 0, sonVideoZaman = -1, fpsSay = 0, fpsBasi = performance.now(), fps = 0, algilamaMs = 0;
 
 function dongu() {
@@ -311,6 +312,7 @@ function dongu() {
   if (!yuzModeli || video.readyState < 2 || video.currentTime === sonVideoZaman) return;
   sonVideoZaman = video.currentTime;
   const t = performance.now();
+  sonKareZamani = t;
   let r;
   try { r = yuzModeli.detectForVideo(video, t); } catch { return; }
   algilamaMs = algilamaMs * 0.9 + (performance.now() - t) * 0.1;
@@ -329,6 +331,24 @@ function dongu() {
   aktif?.kare?.(k, t);
 }
 let sonKare = null;
+
+// Chrome, sayfadan çıkıp dönünce (ekran kaydı, bildirim, uygulama değişimi) kamerayı duraklatabilir:
+// geri dönünce devam ettir, kamera kapandıysa yeniden aç.
+async function kameraCanlandir() {
+  if (!akim) return;
+  const iz = akim.getVideoTracks()[0];
+  if (!iz || iz.readyState === "ended") {
+    try { akim.getTracks().forEach((x) => x.stop()); } catch {}
+    try {
+      akim = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+      video.srcObject = akim;
+    } catch (e) { $("kameraNot").textContent = "Kamera yeniden açılamadı: " + (e?.message || e); return; }
+  }
+  if (video.paused) video.play().catch(() => {});
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") kameraCanlandir(); });
+setInterval(() => { if (akim && document.visibilityState === "visible" && performance.now() - sonKareZamani > 1500) kameraCanlandir(); }, 1000);
+const kameraDurdu = () => akim && performance.now() - sonKareZamani > 1500;
 
 // Kotlin: Algilayici.isle
 function cikar(r, w, h, t) {
@@ -470,6 +490,11 @@ function cizDongu(t) {
   if (!aktif) return;
   ctx.clearRect(0, 0, W, H);
   aktif.ciz?.(t);
+  if (kameraDurdu()) {
+    ctx.fillStyle = "rgba(255,138,76,.95)"; ctx.font = "700 16px system-ui"; ctx.textAlign = "center";
+    ctx.fillText("Kamera görüntüsü gelmiyor · yeniden başlatılıyor", W / 2, H / 2 - 80);
+    ctx.textAlign = "start";
+  }
   requestAnimationFrame(cizDongu);
 }
 
