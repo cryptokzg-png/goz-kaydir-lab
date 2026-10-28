@@ -114,8 +114,11 @@ details summary { cursor: pointer; font-weight: 700; padding: 4px 0; }
     <h2>Profil</h2>
     <div id="profilOzet" class="not" style="margin:0">Henüz kalibrasyon yok.</div>
     <div class="tablo-kap" id="izgaraTablo"></div>
+    <p class="not">Dokunarak kalibrasyon: her noktanın ortasına bak, parmağınla dokun. "Dokunarak ekle" mevcut profile örnek ekler; tutuş değiştiyse 20 noktayla hızlı düzeltme olarak kullan.</p>
     <div class="dugmeler" style="margin-top:10px">
       <button class="btn ana" id="bKalibre" disabled>Kalibre et</button>
+      <button class="btn ana" id="bDokunKal" disabled>Dokunarak kalibre et</button>
+      <button class="btn" id="bDokunEkle" disabled>Dokunarak ekle</button>
       <button class="btn" id="bProfilSil">Profili sil</button>
     </div>
   </section>
@@ -175,6 +178,6 @@ details summary { cursor: pointer; font-weight: 700; padding: 4px 0; }
   </div>
 </div>
 
-<script type="module" src="app.js?v=3"></script>
+<script type="module" src="app.js?v=4"></script>
 </body>
 </html>

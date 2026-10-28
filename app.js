@@ -3,7 +3,7 @@
 // buradaki ayarlar bulunduktan sonra uygulamaya aktarılır.
 import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const SURUM = "lab 3";
+const SURUM = "lab 4";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -29,6 +29,8 @@ const AYAR_TANIM = [
   { k: "noktaSure", ad: "Nokta başına süre (ms)", min: 1000, max: 3000, adim: 100, v: 1800 },
   { k: "toplamaBasi", ad: "Toplamaya başlama (ms)", min: 300, max: 1500, adim: 50, v: 700, not: "Göz noktaya varana kadar beklenen süre." },
   { k: "uzaklikAsama", ad: "Yakın ve uzak aşamaları", secenek: [["acik", "Açık"], ["kapali", "Kapalı"]], v: "acik" },
+  { k: "dkSayi", ad: "Dokunarak kalibrasyon nokta sayısı", secenek: [["20", "20"], ["45", "45"], ["90", "90"]], v: "45" },
+  { k: "dkPencere", ad: "Dokunmadan önceki pencere (ms)", min: 150, max: 800, adim: 25, v: 450, not: "Dokunmadan bu kadar önceki kareler örnek alınır (dokunma anı ve sonrası atılır)." },
   { b: "Kilitle modu" },
   { k: "kilitSabitMs", ad: "Kilitlenme süresi (ms)", min: 200, max: 1500, adim: 50, v: 500 },
   { k: "kilitYaricap", ad: "Sabit bakış yarıçapı (px)", min: 20, max: 100, adim: 5, v: 45 },
@@ -40,6 +42,10 @@ const AYAR_TANIM = [
   { b: "Tıklama (bakıp bekle)" },
   { k: "bekleTikMs", ad: "Bekleme süresi (ms)", min: 400, max: 2500, adim: 50, v: 1000 },
   { k: "bekleEsik", ad: "Sabit sayılma eşiği, göz modu (px)", min: 8, max: 60, adim: 2, v: 28 },
+  { k: "kilitTikMs", ad: "Kilitliyken tıklama süresi (ms)", min: 600, max: 3000, adim: 100, v: 1500, not: "İnce ayar için zaman tanır." },
+  { k: "tikAra", ad: "İki tıklama arası en az (ms)", min: 0, max: 2000, adim: 100, v: 800 },
+  { k: "miknatis", ad: "Mıknatıs (hedefe yapış)", secenek: [["acik", "Açık"], ["kapali", "Kapalı"]], v: "acik", not: "Uygulamadaki gibi: yakında tek belirgin hedef varsa imleç ona oturur, hedefler sıkışıksa yapışmaz." },
+  { k: "ogren", ad: "Doğru tıklamalardan öğren", secenek: [["acik", "Açık"], ["kapali", "Kapalı"]], v: "acik" },
   { b: "Performans" },
   { k: "gpu", ad: "Yüz modeli işlemcisi", secenek: [["cpu", "CPU"], ["gpu", "GPU"]], v: "cpu", not: "GPU daha yüksek kare hızı verebilir; değiştirince model yeniden yüklenir." },
 ];
@@ -294,7 +300,7 @@ async function kameraBaslat() {
     await video.play();
     $("bKamera").textContent = "Kamera açık";
     $("bKamera").disabled = true;
-    for (const b of ["bKalibre", "bCanli", "bIsabet", "bKilitTest"]) $(b).disabled = false;
+    for (const b of ["bKalibre", "bCanli", "bIsabet", "bKilitTest", "bDokunKal", "bDokunEkle"]) $(b).disabled = false;
     requestAnimationFrame(dongu);
   } catch (e) {
     $("kameraNot").textContent = "Kamera açılamadı: " + (e?.message || e) + ". Tarayıcıya kamera izni verip tekrar dene.";
@@ -326,11 +332,13 @@ function dongu() {
   if (t - fpsBasi > 1000) { fps = (fpsSay * 1000) / (t - fpsBasi); fpsSay = 0; fpsBasi = t; durumCiz(); }
   const k = cikar(r, video.videoWidth, video.videoHeight, t);
   k.guvenilir = guvenilirMi(k);
+  if (k.f && k.guvenilir) { gecmis.push({ t, f: k.f.slice() }); while (gecmis.length && t - gecmis[0].t > 1500) gecmis.shift(); }
   tahminGuncelle(k);
   sonKare = k;
   aktif?.kare?.(k, t);
 }
 let sonKare = null;
+const gecmis = [];
 
 // Chrome, sayfadan çıkıp dönünce (ekran kaydı, bildirim, uygulama değişimi) kamerayı duraklatabilir:
 // geri dönünce devam ettir, kamera kapandıysa yeniden aç.
@@ -516,6 +524,7 @@ function dugmeler(liste) {
   }
 }
 
+tuval.addEventListener("pointerdown", () => aktif?.bas?.());
 tuval.addEventListener("pointerup", (e) => aktif?.dokun?.(e.clientX / W, e.clientY / H));
 
 // çizim yardımcıları
@@ -554,13 +563,26 @@ function imlecCiz(x, y, kilitli, ilerleme) {
 
 // ------------------------------------------------------------------ imleç motoru (Kotlin: Motor.imleciIsle + Izgara)
 // Lab'da tıklama "bakıp bekle" ile yapılır; uygulamadaki hareketle tıklamanın yerine geçer.
+// Kotlin: KontrolServisi.yakinButon — merkezi en yakın hedef; iki aday neredeyse eşitse yapışma.
+function yakinHedef(x, y, liste) {
+  const ad = liste.filter((h) => Math.max(0, Math.hypot(h.x - x, h.y - y) - h.r) <= 70)
+    .map((h) => [h, Math.hypot(h.x - x, h.y - y)]).sort((a, b) => a[1] - b[1]);
+  if (!ad.length) return null;
+  if (ad.length >= 2 && ad[0][1] > 10 && ad[1][1] < ad[0][1] * 1.5) return null;
+  return ad[0][1] < 90 ? ad[0][0] : null;
+}
+
 function imlecMotoru(hedefler = () => []) {
   const m = {
     x: W / 2, y: H / 2, kilitli: false, ilerleme: 0, asama: 1, zoom: null,
     takip: new HucreTakip(P.cols, P.rows),
     basD: NaN, basE: 0, refD: 0, refE: 0, kilitX: 0, kilitY: 0,
     sabitX: -1e4, sabitY: -1e4, sabitBasi: 0, uzakBasi: 0,
-    bekleX: -1e4, bekleY: -1e4, bekleBasi: 0, tetik: false,
+    bekleX: -1e4, bekleY: -1e4, bekleBasi: 0, tetik: false, sonTik: -1e9,
+  };
+  const miknatis = (x, y) => {
+    const h = S.miknatis === "acik" ? yakinHedef(x, y, hedefler()) : null;
+    return h ? [h.x, h.y] : [x, y];
   };
   m.kilitBirak = () => { m.kilitli = false; m.sabitX = -1e4; m.uzakBasi = 0; };
   m.zoomBitir = () => { m.asama = 1; m.zoom = null; m.takip.sifirla(); };
@@ -577,9 +599,9 @@ function imlecMotoru(hedefler = () => []) {
     m.basD += (k.s.donus - m.basD) * 0.35;
     m.basE += (k.s.egim - m.basE) * 0.35;
 
-    if (mod === "goz") { m.x = gx; m.y = gy; }
+    if (mod === "goz") { [m.x, m.y] = miknatis(gx, gy); }
     else if (!m.kilitli) {
-      m.x = gx; m.y = gy;
+      [m.x, m.y] = miknatis(gx, gy);
       if (Math.hypot(gx - m.sabitX, gy - m.sabitY) > S.kilitYaricap) { m.sabitX = gx; m.sabitY = gy; m.sabitBasi = t; }
       else if (t - m.sabitBasi >= S.kilitSabitMs) {
         m.kilitli = true; m.kilitX = m.x; m.kilitY = m.y; m.refD = m.basD; m.refE = m.basE; m.uzakBasi = 0;
@@ -600,11 +622,12 @@ function imlecMotoru(hedefler = () => []) {
     m.ilerleme = 0;
     if (mod === "kilit" && !m.kilitli) return null;
     const esik = mod === "kilit" ? 8 : S.bekleEsik;
+    if (t - m.sonTik < S.tikAra) { m.bekleX = m.x; m.bekleY = m.y; m.bekleBasi = t; return null; }
     if (Math.hypot(m.x - m.bekleX, m.y - m.bekleY) > esik) { m.bekleX = m.x; m.bekleY = m.y; m.bekleBasi = t; m.tetik = false; }
     else if (!m.tetik) {
-      m.ilerleme = (t - m.bekleBasi) / S.bekleTikMs;
+      m.ilerleme = (t - m.bekleBasi) / (mod === "kilit" ? S.kilitTikMs : S.bekleTikMs);
       if (m.ilerleme >= 1) {
-        m.tetik = true; m.ilerleme = 0;
+        m.tetik = true; m.ilerleme = 0; m.sonTik = t;
         const tik = { x: m.x, y: m.y };
         if (mod === "kilit") m.kilitBirak();
         return tik;
@@ -750,6 +773,60 @@ function kalibrasyon() {
   };
 }
 
+// ------------------------------------------------------------------ dokunarak kalibrasyon
+// Noktanın ortasına bakıp parmakla dokunulur. Dokunmadan hemen önceki kareler (göz hedefteyken)
+// o noktanın örneği olur; dokunma anı ve sonrası atılır (el kamerayı ya da yüzü kapatabilir).
+function dokunarakKalibrasyon(ekle) {
+  const ızg = { 20: [4, 5], 45: [5, 9], 90: [9, 10] }[S.dkSayi] || [5, 9];
+  const [c, r] = ızg, pay = 0.07;
+  const noktalar = [];
+  for (let j = 0; j < r; j++) for (let i = 0; i < c; i++) noktalar.push([pay + ((1 - 2 * pay) * i) / (c - 1), pay + 0.04 + ((1 - 2 * pay - 0.08) * j) / (r - 1)]);
+  noktalar.sort(() => Math.random() - 0.5);
+  const R = 22;
+  const d = { sira: 0, toplanan: [], basma: 0, flas: null, kaçan: 0 };
+  function bitir() {
+    if (d.toplanan.length < 20) { hud("Yeterli ölçüm alınamadı", "Yüzünün göründüğünden emin olup tekrar dene.", ""); return; }
+    P.ornekler = ekle ? [...P.ornekler, ...d.toplanan] : d.toplanan;
+    profilKaydet();
+    hud("Model eğitiliyor…", "", "");
+    setTimeout(() => {
+      profilEgit(true);
+      const g = P.deger;
+      hud("Dokunarak kalibrasyon bitti", g ? `Kalibrasyon hatası ≈ ${g.hataPx.toFixed(0)} px (${(g.hataPx * 0.159).toFixed(0)} mm) · ızgara ${P.cols}×${P.rows}` : "",
+        `${noktalar.length - d.kaçan} nokta · ${d.toplanan.length} örnek · ${d.kaçan} tekrar edilen dokunma`);
+      dugmeler([["Tıklama testi", () => { sahneKapat(); sahneAc(tiklamaTesti()); }, true], ["İsabet testi", () => { sahneKapat(); sahneAc(isabetTesti()); }]]);
+    }, 50);
+  }
+  return {
+    ac() { hud(ekle ? "Dokunarak ekle" : "Dokunarak kalibrasyon", "Noktanın ortasına bak, sonra parmağınla tam ortasına dokun", ""); },
+    bas() { d.basma = performance.now(); },
+    dokun(nx, ny) {
+      if (d.sira >= noktalar.length) return;
+      const [hx, hy] = noktalar[d.sira];
+      const t0 = d.basma || performance.now();
+      if (Math.hypot((nx - hx) * W, (ny - hy) * H) > R * 2) { d.flas = { x: nx * W, y: ny * H, iyi: false, bitis: performance.now() + 500 }; d.kaçan++; return; }
+      const kareler = gecmis.filter((g) => g.t >= t0 - S.dkPencere && g.t <= t0 - 60);
+      if (kareler.length < 3) { hud(null, "Yüzün görünmedi, aynı noktaya tekrar bakıp dokun", null); d.kaçan++; return; }
+      for (const g of kareler) d.toplanan.push({ f: g.f, x: hx, y: hy, t: 0 });
+      d.flas = { x: hx * W, y: hy * H, iyi: true, bitis: performance.now() + 400 };
+      d.sira++;
+      hud(null, "Noktanın ortasına bak, sonra parmağınla tam ortasına dokun", `${d.sira} / ${noktalar.length} · ${d.toplanan.length} örnek`);
+      if (d.sira >= noktalar.length) bitir();
+    },
+    ciz() {
+      const t = performance.now();
+      if (d.sira < noktalar.length) {
+        hud(`Dokunarak kalibrasyon · ${d.sira + 1} / ${noktalar.length}`, null, null);
+        const [hx, hy] = noktalar[d.sira];
+        daire(hx * W, hy * H, R, "rgba(255,194,75,.22)", RENK.vurgu, 3);
+        daire(hx * W, hy * H, 3, "#0d1117");
+        daire(hx * W, hy * H, 2, RENK.yazi);
+      }
+      if (d.flas && t < d.flas.bitis) daire(d.flas.x, d.flas.y, 12, d.flas.iyi ? RENK.iyi : RENK.uyari);
+    },
+  };
+}
+
 // ------------------------------------------------------------------ canlı bakış (Kotlin: GozTest canlı)
 function canli() {
   const im = imlecMotoru();
@@ -882,7 +959,16 @@ function tiklamaTesti() {
       if (tik) {
         const isabet = Math.hypot(tik.x - d.hedef.x, tik.y - d.hedef.y) <= R + 2;
         d.flas = { ...tik, iyi: isabet, bitis: t + 600 };
-        if (isabet) { d.dogru++; d.sureler.push(t - d.basi); d.sira++; d.sira >= SAYI ? bitir() : sonraki(); }
+        if (isabet) {
+          if (S.ogren === "acik" && G.sonOz.length) {
+            // Doğru tıklamada kullanıcının nereye baktığı kesin: o anki göz ölçümünü hedefin yeriyle öğren
+            P.ornekler.push(...G.sonOz.map((f) => ({ f: f.slice(), x: d.hedef.x / W, y: d.hedef.y / H, t: 1 })));
+            let fazla = P.ornekler.filter((o) => o.t === 1).length - 300;
+            if (fazla > 0) P.ornekler = P.ornekler.filter((o) => !(o.t === 1 && fazla-- > 0));
+            P.model = egit(P.ornekler); profilKaydet();
+          }
+          d.dogru++; d.sureler.push(t - d.basi); d.sira++; d.sira >= SAYI ? bitir() : sonraki();
+        }
         else d.yanlis++;
       } else if (t - d.basi > ZAMAN) { d.kacan++; d.sira++; d.sira >= SAYI ? bitir() : sonraki(); }
     },
@@ -919,6 +1005,8 @@ $("bKalibre").addEventListener("click", () => sahneAc(kalibrasyon()));
 $("bCanli").addEventListener("click", () => sahneAc(canli()));
 $("bIsabet").addEventListener("click", () => sahneAc(isabetTesti()));
 $("bKilitTest").addEventListener("click", () => sahneAc(tiklamaTesti()));
+$("bDokunKal").addEventListener("click", () => sahneAc(dokunarakKalibrasyon(false)));
+$("bDokunEkle").addEventListener("click", () => sahneAc(dokunarakKalibrasyon(true)));
 $("bProfilSil").addEventListener("click", () => { P.ornekler = []; profilKaydet(); profilEgit(true); });
 $("bSonucSil").addEventListener("click", () => { sonuclar = []; yaz("gk-sonuc", sonuclar); sonucCiz(); });
 $("bVarsayilan").addEventListener("click", () => { S = { ...VARSAYILAN }; yaz("gk-ayar", S); ayarlariCiz(); profilEgit(true); });
