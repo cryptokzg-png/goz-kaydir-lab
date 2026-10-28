@@ -3,7 +3,7 @@
 // buradaki ayarlar bulunduktan sonra uygulamaya aktarılır.
 import { FaceLandmarker, HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const SURUM = "lab 23";
+const SURUM = "lab 24";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -51,6 +51,7 @@ const AYAR_TANIM = [
   { k: "miknatis", ad: "Mıknatıs (hedefe yapış)", secenek: [["acik", "Açık"], ["kapali", "Kapalı"]], v: "acik", not: "Uygulamadaki gibi: yakında tek belirgin hedef varsa imleç ona oturur, hedefler sıkışıksa yapışmaz." },
   { k: "ogren", ad: "Doğru tıklamalardan öğren", secenek: [["kayma", "Kaymayı düzelt"], ["ornek", "Örnek ekle"], ["kapali", "Kapalı"]], v: "kayma" },
   { k: "dokunma", ad: "Canlı bakışta dokununca", secenek: [["kayma", "Kaymayı düzelt"], ["ornek", "Örnek ekle"]], v: "kayma", not: "Kayma: tüm ekranı topluca kaydırır (hızlı, kararlı). Örnek: modeli yeniden eğitir." },
+  { k: "kaymaTur", ad: "Kayma düzeltmesi türü", secenek: [["afin", "Konuma göre (afin)"], ["sabit", "Sabit kayma"]], v: "afin", not: "Sabit: tüm ekran aynı miktarda kaydırılır. Afin: son bilinen bakışlardan kayma + ölçek + eğiklik öğrenilir (model tahminleri ortaya doğru sıkışıyorsa bunu da düzeltir). Az bilinen bakış varken sabit kaymaya yakın davranır." },
   { k: "kaymaHiz", ad: "Kayma düzeltme hızı", min: 0.1, max: 1, adim: 0.05, v: 0.4, not: "Her doğru bilinen bakışta kaymanın ne kadarı düzeltilsin. 1 = tamamı." },
   { b: "El ve parmak" },
   { k: "kontrol", ad: "İmleç kontrolü", secenek: [["goz", "Sadece göz"], ["parmak", "Sadece parmak"], ["gozParmak", "Göz + parmak"]], v: "goz", not: "Göz + parmak: göz imleci götürür, işaret parmağını kaldırınca imleç o noktadan parmakla kayar." },
@@ -80,6 +81,11 @@ if ((S._surum || 0) < 22) {
   S.kaydirModu = "bakis"; S.kontrol = "goz";
   if (S.tikYontem === "cimdik") S.tikYontem = "kapat";
   S._surum = 22; yaz("gk-ayar", S);
+}
+if ((S._surum || 0) < 24) {
+  // Uygulamayla aynı model; yeni düzeltme türü
+  S.ozellik = "goz"; S.lambda = 0.5; S.kaymaTur = VARSAYILAN.kaymaTur;
+  S._surum = 24; yaz("gk-ayar", S);
 }
 // Eski sürümden kalan seçenek değerleri
 if (!AYAR_TANIM.find((a) => a.k === "ogren").secenek.some(([v]) => v === S.ogren)) S.ogren = VARSAYILAN.ogren;
@@ -128,6 +134,7 @@ function ayarDegisti(k, v, surukleniyor = false) {
     egitZamanlayici = setTimeout(() => { profilEgit(true); }, surukleniyor ? 400 : 0);
   }
   if (k === "izgara") profilEgit(false);
+  if (k === "kaymaTur") profilCiz();
   if (k === "gpu" && !surukleniyor) modelYukle();
 }
 
@@ -243,7 +250,73 @@ function kaymaGuncelle(hataX, hataY, oran = S.kaymaHiz) {
   yaz("gk-kayma", P.kayma);
   profilCiz();
 }
-function kaymaSifirla() { P.kayma = { x: 0, y: 0 }; yaz("gk-kayma", P.kayma); profilCiz(); }
+function kaymaSifirla() {
+  P.kayma = { x: 0, y: 0 }; yaz("gk-kayma", P.kayma);
+  P.bilinen = []; yaz("gk-bilinen", P.bilinen); afinYenile();
+  profilCiz();
+}
+
+// Afin düzeltme: son bilinen bakışlardan (ham tahmin → gerçek yer) her eksen için
+// gerçek = a + b·(hamX − 0,5) + c·(hamY − 0,5). Eğimler 1/0'a, kesişim sabit kaymaya doğru çekilir:
+// az nokta varken sabit kayma gibi davranır, noktalar çoğaldıkça ölçeği de öğrenir.
+P.bilinen = oku("gk-bilinen", []);
+P.afin = null;
+const AFIN_EN_FAZLA = 40, AFIN_UNUT = 0.93, AFIN_EGIM_GUVEN = 1, AFIN_KESISIM_GUVEN = 1;
+function coz3(A, b) {
+  const m = A.map((r, i) => [...r, b[i]]);
+  for (let p = 0; p < 3; p++) {
+    let en = p;
+    for (let r = p + 1; r < 3; r++) if (Math.abs(m[r][p]) > Math.abs(m[en][p])) en = r;
+    [m[p], m[en]] = [m[en], m[p]];
+    if (Math.abs(m[p][p]) < 1e-12) return null;
+    for (let r = 0; r < 3; r++) { if (r === p) continue; const f = m[r][p] / m[p][p]; for (let c = p; c <= 3; c++) m[r][c] -= f * m[p][c]; }
+  }
+  return [0, 1, 2].map((i) => m[i][3] / m[i][i]);
+}
+/** noktalar: [{hx, hy, x|null, y|null}], agirlik: i → w. onsel: [kesişim, eğimX, eğimY] eksen başına ve güvenleri. */
+function afinUydur(noktalar, eksen, onsel, guven, agirlik) {
+  const A = [[guven[0], 0, 0], [0, guven[1], 0], [0, 0, guven[2]]];
+  const b = [guven[0] * onsel[0], guven[1] * onsel[1], guven[2] * onsel[2]];
+  noktalar.forEach((n, i) => {
+    const t = n[eksen];
+    if (t == null) return;
+    const z = [1, n.hx - 0.5, n.hy - 0.5], w = agirlik(i);
+    for (let r = 0; r < 3; r++) { for (let c = 0; c < 3; c++) A[r][c] += w * z[r] * z[c]; b[r] += w * z[r] * t; }
+  });
+  return coz3(A, b);
+}
+function afinYenile() {
+  const n = P.bilinen.length;
+  if (!n) { P.afin = null; return; }
+  const w = (i) => AFIN_UNUT ** (n - 1 - i);
+  const g = [AFIN_KESISIM_GUVEN, AFIN_EGIM_GUVEN, AFIN_EGIM_GUVEN];
+  const ax = afinUydur(P.bilinen, "x", [0.5 - P.kayma.x, 1, 0], g, w);
+  const ay = afinUydur(P.bilinen, "y", [0.5 - P.kayma.y, 0, 1], [g[0], g[2], g[1]], w);
+  P.afin = ax && ay ? { ax, ay, n } : null;
+}
+afinYenile();
+function duzelt(px, py) {
+  if (S.kaymaTur === "afin" && P.afin) {
+    const { ax, ay } = P.afin, u = px - 0.5, v = py - 0.5;
+    return [ax[0] + ax[1] * u + ax[2] * v, ay[0] + ay[1] * u + ay[2] * v];
+  }
+  return [px - P.kayma.x, py - P.kayma.y];
+}
+/**
+ * Kullanıcının o anda (nx, ny)'ye baktığı biliniyor (doğru tıklama, dokunma). Sabit kaymayı da afin düzeltmeyi de
+ * günceller (ikisi ayrı tutulur, ayar değişince hemen karşılaştırılabilsin). Eksenlerden biri null olabilir
+ * (ör. tam genişlik satır: sadece dikey konum bilinir).
+ */
+function bilinenBakis(nx, ny, oran = S.kaymaHiz, ham = [G.fx, G.fy]) {
+  if (!G.gecerli || ham[0] == null) return;
+  const [hx, hy] = ham;
+  kaymaGuncelle(nx == null ? 0 : hx - P.kayma.x - nx, ny == null ? 0 : hy - P.kayma.y - ny, oran);
+  P.bilinen.push({ hx, hy, x: nx, y: ny });
+  if (P.bilinen.length > AFIN_EN_FAZLA) P.bilinen.shift();
+  yaz("gk-bilinen", P.bilinen);
+  afinYenile();
+  profilCiz();
+}
 
 function profilKaydet() { yaz("gk-profil", P.ornekler); }
 
@@ -263,8 +336,9 @@ function profilCiz() {
   if (!P.ornekler.length) { $("profilOzet").textContent = "Henüz kalibrasyon yok. Önce kalibre et."; $("izgaraTablo").innerHTML = ""; return; }
   const ar = P.aralik ? ` · uzaklık ${P.aralik[0].toFixed(0)}–${P.aralik[1].toFixed(0)} cm` : "";
   const ky = Math.round(P.kayma.x * innerWidth), kd = Math.round(P.kayma.y * innerHeight);
+  const af = S.kaymaTur === "afin" && P.afin ? ` · afin: ölçek ${P.afin.ax[1].toFixed(2)} / ${P.afin.ay[2].toFixed(2)} (${P.afin.n} bilinen bakış)` : "";
   $("profilOzet").textContent = `${kal} kalibrasyon + ${duz} düzeltme örneği · özellik: ${S.ozellik} λ${S.lambda}${ar} · seçili ızgara ${P.cols}×${P.rows}` +
-    ` · kayma düzeltmesi ${ky} / ${kd} px` + (P.model ? "" : " · model eğitilemedi");
+    ` · kayma düzeltmesi ${ky} / ${kd} px${af}` + (P.model ? "" : " · model eğitilemedi");
   if (!P.deger) { $("izgaraTablo").innerHTML = ""; return; }
   const d = P.deger;
   $("izgaraTablo").innerHTML = `<table><tr><th>Izgara</th>${ADAYLAR.map(([c, r]) => `<th>${c}×${r}</th>`).join("")}<th>Hata</th></tr>
@@ -520,7 +594,8 @@ function uzaklikDurumu(u) {
 }
 
 // ------------------------------------------------------------------ bakış tahmini (Kotlin: Izgara.tahminGuncelle)
-const G = { x: 0.5, y: 0.5, hamX: 0.5, hamY: 0.5, gecerli: false, sonOz: [] };
+// fx, fy: yumuşatılmış ham model tahmini (düzeltmesiz); x, y: düzeltilmiş bakış
+const G = { x: 0.5, y: 0.5, fx: null, fy: null, hamX: 0.5, hamY: 0.5, gecerli: false, sonOz: [] };
 const fX = new OneEuro(), fY = new OneEuro();
 
 function kirpiyor(s) {
@@ -543,8 +618,8 @@ const aday = { x: 0, y: 0, n: 0 };
 function tahminGuncelle(k) {
   if (!P.model || !k.f) { if (!P.model) G.gecerli = false; return; }
   if (!k.guvenilir) return;
-  let [px, py] = P.model.tahmin(k.f);
-  px -= P.kayma.x; py -= P.kayma.y;
+  const [rx, ry] = P.model.tahmin(k.f);
+  const [px, py] = duzelt(rx, ry);
   G.hamX = px; G.hamY = py;
   // Sıçrama süzgeci: büyük ani sıçrama ancak sonraki karelerde de aynı yerde kalırsa kabul edilir.
   // Ardışık karelerin birbirine yakın olması şart değil (doğal titreme bunu bozar):
@@ -556,8 +631,12 @@ function tahminGuncelle(k) {
   }
   aday.n = 0;
   if (!G.gecerli) { fX.sifirla(); fY.sifirla(); }
-  G.x = kis(fX.filtre(px, k.t, S.kesim, S.beta), 0, 0.999);
-  G.y = kis(fY.filtre(py, k.t, S.kesim, S.beta), 0, 0.999);
+  // Önce ham tahmin yumuşatılır, sonra düzeltilir: bilinen bakışlarda ham değer öğrenmeye gider
+  G.fx = fX.filtre(rx, k.t, S.kesim, S.beta);
+  G.fy = fY.filtre(ry, k.t, S.kesim, S.beta);
+  const [dx, dy] = duzelt(G.fx, G.fy);
+  G.x = kis(dx, 0, 0.999);
+  G.y = kis(dy, 0, 0.999);
   G.gecerli = true;
   G.sonOz.push(k.f.slice());
   if (G.sonOz.length > 6) G.sonOz.shift();
@@ -1067,7 +1146,12 @@ function canli() {
   function geriAl() {
     if (!oturum.length) return;
     const son = oturum.at(-1);
-    if (son.kayma) { oturum.pop(); hatalar.pop(); kaymaGuncelle(-son.kayma[0], -son.kayma[1]); return; }
+    if (son.onceki) {
+      oturum.pop(); hatalar.pop();
+      P.kayma = son.onceki.kayma; P.bilinen = son.onceki.bilinen;
+      yaz("gk-kayma", P.kayma); yaz("gk-bilinen", P.bilinen); afinYenile(); profilCiz();
+      return;
+    }
     const grup = new Set(oturum.pop());
     hatalar.pop();
     P.ornekler = P.ornekler.filter((o) => !grup.has(o));
@@ -1084,7 +1168,11 @@ function canli() {
       if (!G.gecerli || !G.sonOz.length || !sonKare?.f) { hud(null, "Yüzün görünmüyor, düzeltme eklenmedi", null); return; }
       hatalar.push(Math.hypot((G.x - nx) * W, (G.y - ny) * H));
       duzeltme = { x1: G.x * W, y1: G.y * H, x2: nx * W, y2: ny * H, bitis: performance.now() + 1500 };
-      if (S.dokunma === "kayma") { oturum.push({ kayma: [G.x - nx, G.y - ny] }); kaymaGuncelle(G.x - nx, G.y - ny); return; }
+      if (S.dokunma === "kayma") {
+        oturum.push({ onceki: { kayma: { ...P.kayma }, bilinen: P.bilinen.slice() } });
+        bilinenBakis(nx, ny);
+        return;
+      }
       const grup = G.sonOz.map((f) => ({ f: f.slice(), x: nx, y: ny, t: 2 }));
       P.ornekler.push(...grup);
       let fazla = P.ornekler.filter((o) => o.t === 2).length - 600;
@@ -1112,11 +1200,35 @@ function canli() {
 }
 
 // ------------------------------------------------------------------ isabet testi
+/** İsabet testi noktaları ({hx, hy, nx, ny}) üzerinde düzeltmesiz / sabit / afin hatası, birini dışarıda bırakarak (px). */
+function duzeltmeKarsilastir(sonuc) {
+  const r = sonuc.filter((s) => s.hx != null && !Number.isNaN(s.hx));
+  if (r.length < 6) return null;
+  const pts = r.map((s) => ({ hx: s.hx, hy: s.hy, x: s.nx, y: s.ny }));
+  const px = (ex, ey) => Math.hypot(ex * W, ey * H);
+  let ham = 0, sabit = 0, afin = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i], dig = pts.filter((_, j) => j !== i);
+    ham += px(p.hx - p.x, p.hy - p.y);
+    const sx = dig.reduce((a, o) => a + o.hx - o.x, 0) / dig.length, sy = dig.reduce((a, o) => a + o.hy - o.y, 0) / dig.length;
+    sabit += px(p.hx - sx - p.x, p.hy - sy - p.y);
+    // Çok hafif önsel: sadece sayısal kararlılık için (8 nokta 3 parametreyi rahat belirler)
+    const g = [1e-3, 1e-3, 1e-3];
+    const ax = afinUydur(dig, "x", [0.5, 1, 0], g, () => 1), ay = afinUydur(dig, "y", [0.5, 0, 1], g, () => 1);
+    const u = p.hx - 0.5, v = p.hy - 0.5;
+    afin += px(ax[0] + ax[1] * u + ax[2] * v - p.x, ay[0] + ay[1] * u + ay[2] * v - p.y);
+  }
+  const g = [1e-3, 1e-3, 1e-3];
+  const ax = afinUydur(pts, "x", [0.5, 1, 0], g, () => 1), ay = afinUydur(pts, "y", [0.5, 0, 1], g, () => 1);
+  const n = pts.length;
+  return { hamPx: Math.round(ham / n), sabitPx: Math.round(sabit / n), afinPx: Math.round(afin / n), olcekX: +ax[1].toFixed(2), olcekY: +ay[2].toFixed(2) };
+}
+
 function isabetTesti() {
   const k3 = [0.15, 0.5, 0.85];
   const noktalar = k3.flatMap((y) => k3.map((x) => [x, y])).sort(() => Math.random() - 0.5);
   const SURE = 2000, YOK = 800;
-  const d = { sira: -1, basi: performance.now(), ornek: [], ozler: [], sonuc: [], eklenecek: [], noktaOz: [] };
+  const d = { sira: -1, basi: performance.now(), ornek: [], ham: [], ozler: [], sonuc: [], eklenecek: [], noktaOz: [] };
   function bitir() {
     const hata = d.sonuc.map((r) => r.hata), sirali = [...hata].sort((a, b) => a - b);
     const ort = hata.reduce((a, b) => a + b, 0) / hata.length;
@@ -1129,8 +1241,14 @@ function isabetTesti() {
     sonucEkle("İsabet", ozet, `ort ${ozet.ortPx} px (≈${Math.round(ozet.ortPx * 0.159)} mm) · ortanca ${ozet.ortancaPx} · titreme ±${ozet.titremePx} · 3×3 %${ozet.i3x3}`);
     // Sabit kayma payı: hatanın ne kadarı tüm noktalarda aynı yöne olan kayma
     const kalan = Math.sqrt(d.sonuc.reduce((a, r) => a + (r.ex - kx) ** 2 + (r.ey - ky) ** 2, 0) / d.sonuc.length);
-    hud("İsabet testi bitti", `Ortalama hata ${ozet.ortPx} px ≈ ${Math.round(ozet.ortPx * 0.159)} mm · titreme ±${ozet.titremePx} px`,
-      `Sabit kayma: ${yon} (${ozet.kaymaPx} px)\nKayma çıkınca kalan hata: ${kalan.toFixed(0)} px\nOrtanca ${ozet.ortancaPx} px · en kötü ${ozet.enKotuPx} px\n3×3 isabet %${ozet.i3x3} · 3×4 isabet %${ozet.i3x4}`);
+    // Düzeltme türlerinin adil karşılaştırması: her noktayı, diğer 8 noktadan öğrenilen düzeltmeyle tahmin et (LOO)
+    const loo = duzeltmeKarsilastir(d.sonuc);
+    if (loo) Object.assign(ozet, loo);
+    const looYazi = loo ? `\n\nDÜZELTME KARŞILAŞTIRMA (diğer 8 noktadan öğrenip 9.'yu tahmin)\nDüzeltmesiz ${loo.hamPx} px · sabit kayma ${loo.sabitPx} px · afin ${loo.afinPx} px` +
+      `\nAfin ölçek: yatay ${loo.olcekX} · dikey ${loo.olcekY} (1 = sıkışma yok)` : "";
+    hud("İsabet testi bitti", `Ortalama hata ${ozet.ortPx} px ≈ ${Math.round(ozet.ortPx * 0.159)} mm · titreme ±${ozet.titremePx} px · düzeltme: ${S.kaymaTur}`,
+      `Sabit kayma: ${yon} (${ozet.kaymaPx} px)\nKayma çıkınca kalan hata: ${kalan.toFixed(0)} px\nOrtanca ${ozet.ortancaPx} px · en kötü ${ozet.enKotuPx} px\n3×3 isabet %${ozet.i3x3} · 3×4 isabet %${ozet.i3x4}` + looYazi);
+    if (loo) { sonuclar[0].yazi += ` · LOO ham ${loo.hamPx} / sabit ${loo.sabitPx} / afin ${loo.afinPx}`; sonuclar[0].ozet = ozet; yaz("gk-sonuc", sonuclar); sonucCiz(); }
     // Model karşılaştırması: aynı test ölçümleri, profildeki aynı örneklerle eğitilmiş farklı modeller
     const egitimSeti = P.ornekler.filter((o) => o.t !== 2);
     const satirlar = [];
@@ -1173,9 +1291,12 @@ function isabetTesti() {
     };
     dugmeler([["Tekrar", () => { sahneKapat(); sahneAc(isabetTesti()); }, true],
       ...(enIyi && (enIyi.set !== S.ozellik || enIyi.lam !== S.lambda) ? [["En iyi modeli seç", enIyiyiSec]] : []),
-      ...(d.sonuc.length ? [["Kaymayı düzelt", () => {
+      ...(d.sonuc.length ? [["Düzeltmeyi öğret", () => {
         kaymaGuncelle(kx / W, ky / H, 1);
-        hud("Kayma düzeltildi", `Tüm tahminler ${Math.round(Math.hypot(kx, ky))} px geri kaydırıldı. Tekrar test ederek farkı gör.`, null);
+        // 9 nokta afin düzeltmeye de bilinen bakış olarak girer (sabit kayma yukarıda tamamen düzeltildi)
+        for (const r of d.sonuc) { P.bilinen.push({ hx: r.hx, hy: r.hy, x: r.nx, y: r.ny }); if (P.bilinen.length > AFIN_EN_FAZLA) P.bilinen.shift(); }
+        yaz("gk-bilinen", P.bilinen); afinYenile(); profilCiz();
+        hud("Düzeltme öğrenildi", `Sabit kayma ${Math.round(Math.hypot(kx, ky))} px düzeltildi, 9 nokta afin düzeltmeye eklendi. Tekrar test ederek farkı gör.`, null);
         dugmeler([["Tekrar test et", () => { sahneKapat(); sahneAc(isabetTesti()); }, true]]);
       }]] : []),
       ...(d.eklenecek.length ? [["Bu ölçümleri profile ekle", ekle]] : [])]);
@@ -1184,7 +1305,7 @@ function isabetTesti() {
     ac() { hud("İsabet testi", "Beliren noktaya bak. İmleç gösterilmez (kovalama olmasın).", ""); },
     kare(k, t) {
       if (d.sira < 0 || d.sira >= noktalar.length) return;
-      if (t - d.basi >= YOK && G.gecerli && k.f) { d.ornek.push([G.x * W, G.y * H]); if (k.guvenilir) d.ozler.push(k.f.slice()); }
+      if (t - d.basi >= YOK && G.gecerli && k.f) { d.ornek.push([G.x * W, G.y * H]); d.ham.push([G.fx, G.fy]); if (k.guvenilir) d.ozler.push(k.f.slice()); }
     },
     ciz() {
       const t = performance.now();
@@ -1202,11 +1323,12 @@ function isabetTesti() {
         if (d.ornek.length >= 5) {
           const mx = d.ornek.reduce((a, o) => a + o[0], 0) / d.ornek.length, my = d.ornek.reduce((a, o) => a + o[1], 0) / d.ornek.length;
           const titreme = Math.sqrt(d.ornek.reduce((a, o) => a + (o[0] - mx) ** 2 + (o[1] - my) ** 2, 0) / d.ornek.length);
-          d.sonuc.push({ ex: mx - nx * W, ey: my - ny * H, hata: Math.hypot(mx - nx * W, my - ny * H), titreme });
+          const ort = (i) => d.ham.reduce((a, o) => a + o[i], 0) / d.ham.length;
+          d.sonuc.push({ ex: mx - nx * W, ey: my - ny * H, hata: Math.hypot(mx - nx * W, my - ny * H), titreme, hx: ort(0), hy: ort(1), nx, ny });
         }
         for (const f of d.ozler) d.eklenecek.push({ f, x: nx, y: ny, t: 2 });
         if (d.ozler.length >= 3) d.noktaOz.push({ x: nx, y: ny, ozler: d.ozler });
-        d.ornek = []; d.ozler = []; d.sira++; d.basi = t;
+        d.ornek = []; d.ham = []; d.ozler = []; d.sira++; d.basi = t;
         if (d.sira >= noktalar.length) { d.sonuc.length >= 5 ? bitir() : hud("Yeterli ölçüm yok", "Yüzünün göründüğünden emin ol", ""); }
       }
     },
@@ -1248,7 +1370,7 @@ function tiklamaTesti() {
         const isabet = Math.hypot(tik.x - d.hedef.x, tik.y - d.hedef.y) <= R + 2;
         d.flas = { ...tik, iyi: isabet, bitis: t + 600 };
         if (isabet) {
-          if (S.ogren === "kayma") kaymaGuncelle(G.x - d.hedef.x / W, G.y - d.hedef.y / H);
+          if (S.ogren === "kayma") bilinenBakis(d.hedef.x / W, d.hedef.y / H);
           if (S.ogren === "ornek" && G.sonOz.length) {
             // Doğru tıklamada kullanıcının nereye baktığı kesin: o anki göz ölçümünü hedefin yeriyle öğren
             P.ornekler.push(...G.sonOz.map((f) => ({ f: f.slice(), x: d.hedef.x / W, y: d.hedef.y / H, t: 1 })));
@@ -1477,6 +1599,12 @@ function telefonTesti() {
       else if (o.id.startsWith("kisi:")) { d.ekran = "kisi"; d.kisi = o.ad; dogru = olay("kisi:" + o.ad); }
       else if (o.id === "gonder") dogru = d.kisi === isim && olay("gonder");
     }
+    // Doğru tıklamada kullanıcı o öğeye bakıyordu: uygulamadaki sessiz kalibrasyon gibi düzeltmeye besle.
+    // Geniş öğede (tam genişlik satır) sadece dar eksen bilinir.
+    if (dogru && o && S.ogren === "kayma") {
+      const nx = o.w <= W * 0.35 ? (o.x + o.w / 2) / W : null, ny = o.h <= H * 0.12 ? (o.y + o.h / 2) / H : null;
+      if (nx != null || ny != null) bilinenBakis(nx, ny);
+    }
     // Geri düğmesi yanlış sayılmaz (yanlış ekrandan dönmek için gerekir)
     if (!dogru && o?.id !== "geri") d.yanlis++;
     d.flas = { ...p, iyi: dogru || o?.id === "geri", bitis: performance.now() + 500 };
@@ -1484,8 +1612,8 @@ function telefonTesti() {
   function bitir() {
     d.bitti = true;
     const top = (performance.now() - d.basi) / 1000;
-    const ozet = { kontrol: S.kontrol, tik: S.tikYontem, sureSn: +top.toFixed(1), yanlis: d.yanlis, gorevSn: d.sureler.map((x) => +(x / 1000).toFixed(1)) };
-    sonucEkle("Telefon", ozet, `${S.kontrol} · ${top.toFixed(0)} sn · ${d.yanlis} yanlış · görevler ${ozet.gorevSn.join("/")} sn`);
+    const ozet = { kontrol: S.kontrol, tik: S.tikYontem, kaydir: S.kaydirModu, duzeltme: S.kaymaTur, sureSn: +top.toFixed(1), yanlis: d.yanlis, gorevSn: d.sureler.map((x) => +(x / 1000).toFixed(1)) };
+    sonucEkle("Telefon", ozet, `${$("aMod").value} · ${S.kontrol} · tık ${S.tikYontem} · kaydır ${S.kaydirModu} · ${top.toFixed(0)} sn · ${d.yanlis} yanlış · görevler ${ozet.gorevSn.join("/")} sn`);
     hud("Telefon testi bitti", `${gorevler.length} görev ${top.toFixed(0)} saniyede · ${d.yanlis} yanlış tık`, `Görev süreleri: ${ozet.gorevSn.join(" · ")} sn`);
     dugmeler([["Tekrar", () => { sahneKapat(); sahneAc(telefonTesti()); }, true]]);
   }
@@ -1500,6 +1628,8 @@ function telefonTesti() {
       // Kaydırma: iki parmak (liste ekranında)
       const iki = S.kaydirModu === "yumruk" ? EL.yumruk : S.kaydirModu !== "cimdik" && (EL.iki || (EL.var && t - EL.sonIki < 300));
       const kayiyor = d.ekran === "liste" && kaydirGuncelle(d, t, dt, SATIR, 0, listeBoyu(), { ust: UST + 60, alt: H - ALT });
+      // Liste kayınca kilitli satır yerinden oynar: kilidi bırak
+      if (kayiyor) im.kilitBirak();
       if (kayiyor && S.kaydirModu === "bakis") return; // bakarak kayarken tıklama/kilit olmasın
       // Geri: açık avuç 0,6 sn
       if (EL.avuc && EL.avucBasi && t - EL.avucBasi > 600 && t - d.sonGeri > 1200) { d.sonGeri = t; geri(); }
@@ -1603,6 +1733,13 @@ $("bDokunKal").addEventListener("click", () => sahneAc(dokunarakKalibrasyon(fals
 $("bDokunEkle").addEventListener("click", () => sahneAc(dokunarakKalibrasyon(true)));
 $("bParmakTest").addEventListener("click", () => sahneAc(parmakTesti()));
 $("bTelefonTest").addEventListener("click", () => sahneAc(telefonTesti()));
+// Tam gözle kullanım: atlamalı kilit + gözleri kapatarak tıklama + bakarak kaydırma
+$("bTamGoz").addEventListener("click", () => {
+  $("aMod").value = "kilit"; yaz("gk-mod", "kilit");
+  for (const [k, v] of [["kontrol", "goz"], ["tikYontem", "kapat"], ["kaydirModu", "bakis"], ["ogren", "kayma"]]) S[k] = v;
+  yaz("gk-ayar", S); ayarlariCiz();
+  const b = $("bTamGoz"); b.textContent = "Ayarlandı ✓"; setTimeout(() => (b.textContent = "Tam gözle ayarla"), 1500);
+});
 $("bProfilSil").addEventListener("click", () => { P.ornekler = []; profilKaydet(); kaymaSifirla(); profilEgit(true); });
 $("bKaymaSifirla").addEventListener("click", () => {
   kaymaSifirla();
