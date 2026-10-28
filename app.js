@@ -354,6 +354,7 @@ function profilEgit(degerlendirmeYap) {
     P.lam = P.secim?.lam ?? S.lambda; P.set = P.secim?.set ?? S.ozellik;
   } else { P.lam = S.lambda; P.set = S.ozellik; }
   P.model = egit(P.ornekler, P.set, P.lam);
+  if (S.lambdaOto === "acik" && $("ayarlar").childElementCount) ayarlariCiz();
   const u = P.ornekler.filter((o) => o.t === 0).map((o) => o.f[UZAKLIK]).sort((a, b) => a - b);
   P.aralik = u.length < 20 ? null : [u[Math.floor(u.length / 20)], u[u.length - 1 - Math.floor(u.length / 20)]];
   if (degerlendirmeYap) P.deger = P.model ? degerlendir(P.ornekler, innerWidth, innerHeight, P.lam, P.set) : null;
