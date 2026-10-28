@@ -3,7 +3,7 @@
 // buradaki ayarlar bulunduktan sonra uygulamaya aktarılır.
 import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const SURUM = "lab 1";
+const SURUM = "lab 2";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -16,6 +16,10 @@ const AYAR_TANIM = [
   { k: "kirpTaban", ad: "Kırpma eşiği", min: 0.2, max: 0.6, adim: 0.01, v: 0.35, not: "Bu değerin üstünde takip donar (göz kırpılıyor sayılır)." },
   { k: "kirpEgim", ad: "Aşağı bakışta eşik artışı", min: 0, max: 1, adim: 0.05, v: 0.45, not: "Aşağı bakınca göz kapağı düşer; eşik bu oranda yükselir." },
   { k: "kirpTavan", ad: "Kırpma eşiği üst sınırı", min: 0.4, max: 0.9, adim: 0.01, v: 0.7 },
+  { k: "kirpGoreli", ad: "Kapanmaya başlama algısı", min: 0, max: 0.4, adim: 0.01, v: 0.15, not: "Kırpma puanı senin açık göz değerinin bu kadar üstüne çıkınca da donar. Kırpmanın ilk karelerini yakalar. 0 = kapalı." },
+  { k: "kirpSonrasi", ad: "Kırpmadan sonra bekleme (ms)", min: 0, max: 400, adim: 10, v: 150, not: "Göz açılırken ölçüm bozuk olur; bu süre boyunca imleç donuk kalır." },
+  { k: "sicramaEsik", ad: "Sıçrama süzgeci (ekranın oranı)", min: 0.05, max: 0.6, adim: 0.01, v: 0.2, not: "Bundan büyük ani sıçramalar onaylanmadan kabul edilmez." },
+  { k: "sicramaKare", ad: "Sıçrama onayı (kare)", min: 0, max: 3, adim: 1, v: 1, not: "Büyük sıçramanın kabul edilmesi için kaç kare daha aynı yerde kalmalı. 0 = süzgeç kapalı." },
   { b: "Model" },
   { k: "ozellik", ad: "Göz özellikleri", secenek: [["yeni", "Yeni (uzaklık + kapak, 10)"], ["eski", "Eski (6)"]], v: "yeni", not: "Değiştirince model aynı örneklerle yeniden eğitilir: farkı hemen ölçebilirsin." },
   { k: "lambda", ad: "Düzenleme (lambda)", min: 0.002, max: 0.2, adim: 0.002, v: 0.02, not: "Yüksek = daha kararlı ama daha az esnek model." },
@@ -319,6 +323,7 @@ function dongu() {
   fpsSay++;
   if (t - fpsBasi > 1000) { fps = (fpsSay * 1000) / (t - fpsBasi); fpsSay = 0; fpsBasi = t; durumCiz(); }
   const k = cikar(r, video.videoWidth, video.videoHeight, t);
+  k.guvenilir = guvenilirMi(k);
   tahminGuncelle(k);
   sonKare = k;
   aktif?.kare?.(k, t);
@@ -361,7 +366,9 @@ function cikar(r, w, h, t) {
   };
   const sg = goz(33, 133, 468), sl = goz(362, 263, 473);
   const ks = kapakOran(33, 133, 159, 145, 468), kl = kapakOran(362, 263, 386, 374, 473);
-  const kapak = ks != null && kl != null ? (ks + kl) / 2 : ks ?? kl ?? 0.5;
+  // Kapak ölçülemiyorsa (göz kapalı) bu karenin göz ölçümü güvenilmez: hiç kullanma.
+  if (ks == null && kl == null) return k;
+  const kapak = ks != null && kl != null ? (ks + kl) / 2 : ks ?? kl;
   k.f = [(sg[0] + sl[0]) / 2, (sg[1] + sl[1]) / 2, s.bakisX, s.bakisY, s.donus, s.egim, M[12], M[13], -M[14], kapak];
   return k;
 }
@@ -394,11 +401,31 @@ function kirpiyor(s) {
   return Math.max(s.sol, s.sag) > Math.min(S.kirpTaban + S.kirpEgim * asagi, S.kirpTavan);
 }
 
+// Kırpma durumu: kişinin açık göz kırpma puanı (taban) yavaşça takip edilir.
+const K = { taban: NaN, son: -1e9 };
+function guvenilirMi(k) {
+  if (!k.f) { K.son = k.t; return false; }
+  const m = Math.max(k.s.sol, k.s.sag);
+  const goreli = S.kirpGoreli > 0 && !Number.isNaN(K.taban) && m > K.taban + S.kirpGoreli;
+  if (kirpiyor(k.s) || goreli) { K.son = k.t; return false; }
+  K.taban = Number.isNaN(K.taban) ? m : K.taban + (m - K.taban) * 0.05;
+  return k.t - K.son >= S.kirpSonrasi;
+}
+
+const aday = { x: 0, y: 0, n: 0 };
 function tahminGuncelle(k) {
-  if (!P.model || !k.f) { G.gecerli = false; return; }
-  if (kirpiyor(k.s)) return;
+  if (!P.model || !k.f) { if (!P.model) G.gecerli = false; return; }
+  if (!k.guvenilir) return;
   const [px, py] = P.model.tahmin(k.f);
   G.hamX = px; G.hamY = py;
+  // Sıçrama süzgeci: büyük ani sıçrama ancak sonraki karelerde de aynı yerde kalırsa kabul edilir.
+  if (G.gecerli && S.sicramaKare > 0 && Math.hypot(px - G.x, py - G.y) > S.sicramaEsik) {
+    if (aday.n > 0 && Math.hypot(px - aday.x, py - aday.y) < S.sicramaEsik / 2) aday.n++;
+    else { aday.x = px; aday.y = py; aday.n = 1; }
+    if (aday.n <= S.sicramaKare) return;
+    fX.sifirla(); fY.sifirla();
+  }
+  aday.n = 0;
   if (!G.gecerli) { fX.sifirla(); fY.sifirla(); }
   G.x = kis(fX.filtre(px, k.t, S.kesim, S.beta), 0, 0.999);
   G.y = kis(fY.filtre(py, k.t, S.kesim, S.beta), 0, 0.999);
@@ -422,7 +449,6 @@ addEventListener("resize", () => { if (aktif) boyutla(); });
 function sahneAc(h) {
   aktif = h;
   sahne.hidden = false;
-  document.documentElement.requestFullscreen?.({ navigationUI: "hide" }).catch(() => {});
   navigator.wakeLock?.request("screen").then((k) => { h.uyanik = k; }).catch(() => {});
   boyutla();
   hud("", "", "");
@@ -438,7 +464,6 @@ function sahneKapat() {
   h?.kapat?.();
   h?.uyanik?.release?.().catch(() => {});
   sahne.hidden = true;
-  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
 }
 
 function cizDongu(t) {
@@ -517,7 +542,7 @@ function imlecMotoru(hedefler = () => []) {
 
   /** @returns {x,y} tıklama olduysa */
   m.guncelle = (k, t) => {
-    if (!G.gecerli || !k.f || kirpiyor(k.s)) return null;
+    if (!G.gecerli || !k.f || !k.guvenilir) return null;
     const mod = $("aMod").value;
     const gx = G.x * W, gy = G.y * H;
     if (mod === "izgara") return izgaraIsle(t);
@@ -653,7 +678,7 @@ function kalibrasyon() {
     kare(k, t) {
       if (k.f) durum.sonU = k.f[UZAKLIK];
       if (durum.sira < 0 || durum.sira >= noktalar.length || !k.yuz || durum.bekleme) return;
-      if (t - durum.basi < S.toplamaBasi || kirpiyor(k.s) || !k.f) return;
+      if (t - durum.basi < S.toplamaBasi || !k.guvenilir || !k.f) return;
       const [x, y] = noktalar[durum.sira];
       durum.toplanan.push({ f: k.f.slice(), x, y, t: 0 });
       if (durum.sira < normalSon) { durum.nTop += k.f[UZAKLIK]; durum.nSay++; }
