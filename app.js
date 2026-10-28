@@ -3,7 +3,7 @@
 // buradaki ayarlar bulunduktan sonra uygulamaya aktarılır.
 import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const SURUM = "lab 4";
+const SURUM = "lab 5";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -480,6 +480,7 @@ function sahneAc(h) {
   navigator.wakeLock?.request("screen").then((k) => { h.uyanik = k; }).catch(() => {});
   boyutla();
   hud("", "", "");
+  hudUst.style.visibility = hudAltEl.style.visibility = "visible";
   dugmeler([]);
   $("bekleKutu").hidden = true;
   h.ac?.();
@@ -504,6 +505,18 @@ function cizDongu(t) {
     ctx.textAlign = "start";
   }
   requestAnimationFrame(cizDongu);
+}
+
+// Hedef yazıların ya da düğmelerin altına düşerse o yazılar o an gizlenir (dokunma da hedefe gider).
+const hudUst = document.querySelector(".hud.ust"), hudAltEl = document.querySelector(".hud.alt");
+function hudKacin(noktalar) {
+  const pay = 40;
+  for (const el of [hudUst, hudAltEl]) {
+    el.style.visibility = "visible";
+    const r = el.getBoundingClientRect();
+    const cakisiyor = noktalar.some(([x, y]) => y > r.top - pay && y < r.bottom + pay);
+    el.style.visibility = cakisiyor ? "hidden" : "visible";
+  }
 }
 
 function hud(baslik, alt, bilgi) {
@@ -763,6 +776,7 @@ function kalibrasyon() {
       noktalar.slice(0, 16).forEach(([x, y], i) => daire(x * W, y * H, 5, i < Math.min(durum.sira, 16) ? RENK.iyi : RENK.cizgi));
       if (durum.sira >= 0 && durum.sira < noktalar.length && !durum.bekleme) {
         const [x, y] = noktalar[durum.sira];
+        hudKacin([[x * W, y * H]]);
         const p = Math.min(1, (t - durum.basi) / S.noktaSure);
         daire(x * W, y * H, 30, null, RENK.vurgu, 3);
         daire(x * W, y * H, 30 * (1 - 0.6 * p), RENK.vurgu);
@@ -818,6 +832,7 @@ function dokunarakKalibrasyon(ekle) {
       if (d.sira < noktalar.length) {
         hud(`Dokunarak kalibrasyon · ${d.sira + 1} / ${noktalar.length}`, null, null);
         const [hx, hy] = noktalar[d.sira];
+        hudKacin([[hx * W, hy * H]]);
         daire(hx * W, hy * H, R, "rgba(255,194,75,.22)", RENK.vurgu, 3);
         daire(hx * W, hy * H, 3, "#0d1117");
         daire(hx * W, hy * H, 2, RENK.yazi);
@@ -914,6 +929,7 @@ function isabetTesti() {
       if (d.sira === -1) { if (t - d.basi > 1000) { d.sira = 0; d.basi = t; } return; }
       if (d.sira >= noktalar.length) return;
       const [nx, ny] = noktalar[d.sira];
+      hudKacin([[nx * W, ny * H]]);
       const p = Math.min(1, (t - d.basi) / SURE);
       daire(nx * W, ny * H, 26, null, RENK.vurgu, 3);
       daire(nx * W, ny * H, 6, RENK.vurgu);
@@ -975,6 +991,7 @@ function tiklamaTesti() {
     ciz() {
       const t = performance.now();
       if (!P.model) { hud("Önce kalibre et", "", ""); return; }
+      if (d.hedef) hudKacin([[d.hedef.x, d.hedef.y], ...d.tuzak.map((h) => [h.x, h.y])]);
       if (d.hedef) hud(`Tıklama testi · ${d.sira + 1} / ${SAYI}`, null, `${d.dogru} doğru · ${d.yanlis} yanlış · kalan ${Math.max(0, (ZAMAN - (t - d.basi)) / 1000).toFixed(0)} sn`);
       im.ciz((olcek) => {
         for (const h of d.tuzak) daire(h.x, h.y, h.r, "rgba(255,255,255,.18)", "rgba(255,255,255,.4)", 2 * olcek);
