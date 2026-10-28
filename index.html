@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>GözKaydır Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+/* Düzen: tek sütun kontrol paneli + tam ekran sahne (kalibrasyon, canlı, testler) */
+:root {
+  --zemin: #0d1117;
+  --yuzey: #151b24;
+  --yuzey2: #1c2430;
+  --cizgi: #2a3442;
+  --yazi: #e8edf3;
+  --soluk: #8a96a8;
+  --vurgu: #ffc24b;
+  --mavi: #5aa2ff;
+  --iyi: #4ade80;
+  --uyari: #ff8a4c;
+  --kotu: #ff5d6c;
+  --govde: "Atkinson Hyperlegible", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { background: var(--zemin); color: var(--yazi); margin: 0; }
+body {
+  font: 15px/1.45 var(--govde);
+  padding: env(safe-area-inset-top, 0px) max(16px, env(safe-area-inset-right, 0px)) env(safe-area-inset-bottom, 0px) max(16px, env(safe-area-inset-left, 0px));
+}
+[hidden] { display: none !important; }
+button { font: inherit; color: inherit; }
+.kap { max-width: 720px; margin: 0 auto; padding-block: 16px 48px; display: flex; flex-direction: column; gap: 14px; }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+h1 { font-size: 22px; margin: 0; letter-spacing: .01em; }
+h1 span { color: var(--vurgu); }
+h2 { font-size: 13px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--soluk); }
+.surum { font: 12px var(--mono); color: var(--soluk); }
+section { background: var(--yuzey); border: 1px solid var(--cizgi); border-radius: 14px; padding: 14px; }
+.cipler { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 8px; }
+.cip { background: var(--yuzey2); border-radius: 10px; padding: 7px 9px; min-width: 0; }
+.cip b { display: block; font: 600 10px var(--mono); color: var(--soluk); letter-spacing: .06em; }
+.cip span { font: 600 14px var(--mono); font-variant-numeric: tabular-nums; }
+.iyi { color: var(--iyi); } .uyari { color: var(--uyari); } .kotu { color: var(--kotu); }
+.kamera { display: flex; gap: 12px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+video { width: 120px; height: 90px; object-fit: cover; border-radius: 10px; background: #000; transform: scaleX(-1); }
+.dugmeler { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn { border: 0; border-radius: 10px; padding: 11px 14px; background: var(--yuzey2); cursor: pointer; font-weight: 700; min-height: 44px; }
+.btn.ana { background: var(--vurgu); color: #1a1407; }
+.btn:disabled { opacity: .4; cursor: default; }
+.btn:focus-visible { outline: 2px solid var(--mavi); outline-offset: 2px; }
+.not { color: var(--soluk); font-size: 13px; margin: 8px 0 0; }
+.tablo-kap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font: 13px var(--mono); font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--cizgi); white-space: nowrap; }
+th { color: var(--soluk); font-weight: 600; }
+.ayar { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 8px 0; border-bottom: 1px solid var(--cizgi); }
+.ayar:last-child { border-bottom: 0; }
+.ayar label { font-weight: 700; }
+.ayar output { font: 600 13px var(--mono); color: var(--vurgu); font-variant-numeric: tabular-nums; }
+.ayar input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: var(--vurgu); }
+.ayar small { grid-column: 1 / -1; color: var(--soluk); }
+.ayar select { font: inherit; background: var(--yuzey2); color: var(--yazi); border: 1px solid var(--cizgi); border-radius: 8px; padding: 4px 6px; }
+details summary { cursor: pointer; font-weight: 700; padding: 4px 0; }
+.sonuc { font: 12px var(--mono); background: var(--yuzey2); border-radius: 10px; padding: 8px 10px; margin-top: 8px; white-space: pre-wrap; word-break: break-word; }
+
+/* Tam ekran sahne */
+#sahne { position: fixed; inset: 0; background: #05080c; z-index: 50; touch-action: none; overscroll-behavior: none; }
+#tuval { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.hud { position: absolute; left: 0; right: 0; padding: 10px max(12px, env(safe-area-inset-left, 0px)); display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.hud.ust { top: env(safe-area-inset-top, 0px); align-items: center; text-align: center; }
+.hud.alt { bottom: env(safe-area-inset-bottom, 0px); }
+.hud .kutu { pointer-events: auto; background: rgba(21, 27, 36, .88); border: 1px solid var(--cizgi); border-radius: 12px; padding: 8px 10px; }
+#hudBaslik { font-weight: 700; font-size: 16px; }
+#hudAlt { color: var(--soluk); font-size: 13px; }
+#hudBilgi { font: 12px/1.4 var(--mono); white-space: pre-wrap; }
+.hud .dugmeler { pointer-events: auto; }
+#bekleKutu { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(90vw, 360px); text-align: center; background: var(--yuzey); border: 1px solid var(--cizgi); border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 10px; align-items: center; }
+#bekleKutu b { font-size: 18px; }
+#bekleYazi { color: var(--soluk); white-space: pre-line; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+<div class="kap">
+  <header>
+    <h1>GözKaydır <span>Lab</span></h1>
+    <div class="surum" id="surum">model yükleniyor…</div>
+  </header>
+
+  <section>
+    <h2>Kamera</h2>
+    <div class="cipler">
+      <div class="cip"><b>YÜZ</b><span id="cYuz">–</span></div>
+      <div class="cip"><b>FPS</b><span id="cFps">–</span></div>
+      <div class="cip"><b>ALGILAMA</b><span id="cMs">–</span></div>
+      <div class="cip"><b>UZAKLIK</b><span id="cUz">–</span></div>
+      <div class="cip"><b>IŞIK</b><span id="cIsik">–</span></div>
+    </div>
+    <div class="kamera">
+      <video id="video" playsinline muted></video>
+      <div class="dugmeler">
+        <button class="btn ana" id="bKamera" disabled>Kamerayı başlat</button>
+      </div>
+    </div>
+    <p class="not" id="kameraNot">Ön kamera kullanılır. Görüntü telefonda kalır, hiçbir yere gönderilmez.</p>
+  </section>
+
+  <section>
+    <h2>Profil</h2>
+    <div id="profilOzet" class="not" style="margin:0">Henüz kalibrasyon yok.</div>
+    <div class="tablo-kap" id="izgaraTablo"></div>
+    <div class="dugmeler" style="margin-top:10px">
+      <button class="btn ana" id="bKalibre" disabled>Kalibre et</button>
+      <button class="btn" id="bProfilSil">Profili sil</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Dene ve ölç</h2>
+    <div class="dugmeler">
+      <button class="btn ana" id="bCanli" disabled>Canlı bakış</button>
+      <button class="btn" id="bIsabet" disabled>İsabet testi</button>
+      <button class="btn" id="bKilitTest" disabled>Tıklama testi</button>
+    </div>
+    <div class="ayar" style="border:0">
+      <label for="aMod">İmleç modu</label>
+      <select id="aMod">
+        <option value="goz">Göz</option>
+        <option value="kilit">Kilitle</option>
+        <option value="izgara">Izgara</option>
+      </select>
+      <small>Canlı bakış ve tıklama testi bu modu kullanır.</small>
+    </div>
+    <p class="not">İsabet testi: 9 noktaya sırayla bak, ortalama hatayı ölçer. Tıklama testi: küçük hedeflere imleçle bakıp bekleyerek tıkla.</p>
+  </section>
+
+  <section>
+    <h2>Sonuçlar</h2>
+    <div class="tablo-kap" id="sonuclar"><p class="not" style="margin:0">Test yaptıkça burada birikir; ayar değiştirip tekrar test ederek karşılaştır.</p></div>
+    <div class="dugmeler" style="margin-top:10px">
+      <button class="btn" id="bKopyala">Sonuçları ve ayarları kopyala</button>
+      <button class="btn" id="bSonucSil">Sonuçları temizle</button>
+    </div>
+    <div id="kopyaKutu" class="sonuc" hidden></div>
+  </section>
+
+  <section>
+    <h2>Ayarlar</h2>
+    <div id="ayarlar"></div>
+    <div class="dugmeler" style="margin-top:10px">
+      <button class="btn" id="bVarsayilan">Varsayılana dön</button>
+    </div>
+  </section>
+</div>
+
+<div id="sahne" hidden>
+  <canvas id="tuval"></canvas>
+  <div class="hud ust">
+    <div id="hudBaslik"></div>
+    <div id="hudAlt"></div>
+  </div>
+  <div class="hud alt">
+    <div class="kutu" id="hudBilgiKutu"><div id="hudBilgi"></div></div>
+    <div class="dugmeler" id="hudDugmeler"></div>
+  </div>
+  <div id="bekleKutu" hidden>
+    <b id="bekleBaslik"></b>
+    <div id="bekleYazi"></div>
+    <button class="btn" id="bAtla">Bu adımı atla</button>
+  </div>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
