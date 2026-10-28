@@ -3,7 +3,7 @@
 // buradaki ayarlar bulunduktan sonra uygulamaya aktarılır.
 import { FaceLandmarker, HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const SURUM = "lab 16";
+const SURUM = "lab 17";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -292,7 +292,7 @@ const video = $("video");
 let yuzModeli = null;
 let elModeli = null, elYukleniyor = false;
 // El: işaret parmağı (imleç) ve iki parmak (kaydırma). Konum ekran oranı, aynalanmış (kullanıcının sağı = ekranın sağı).
-const EL = { var: false, isaret: false, iki: false, cimdik: false, cimdikOlay: false, x: 0.5, y: 0.5, sonIsaret: 0, sonIki: 0, sonCimdik: 0, fx: new OneEuro(), fy: new OneEuro() };
+const EL = { var: false, isaret: false, iki: false, avuc: false, avucBasi: 0, cimdik: false, cimdikOlay: false, x: 0.5, y: 0.5, sonIsaret: 0, sonIki: 0, sonCimdik: 0, fx: new OneEuro(), fy: new OneEuro() };
 function elGerekli() { return S.kontrol !== "goz" || S.tikYontem === "cimdik" || !!aktif?.elIster; }
 async function elYukle() {
   if (elModeli || elYukleniyor) return;
@@ -312,11 +312,14 @@ function elIsle(t) {
   try { r = elModeli.detectForVideo(video, t); } catch { return; }
   const lm = r.landmarks?.[0];
   EL.cimdikOlay = false;
-  if (!lm) { EL.var = EL.isaret = EL.iki = EL.cimdik = false; return; }
+  if (!lm) { EL.var = EL.isaret = EL.iki = EL.cimdik = EL.avuc = false; EL.avucBasi = 0; return; }
   const d = (a, b) => Math.hypot(lm[a].x - lm[b].x, lm[a].y - lm[b].y);
   const acik = (uc, eklem) => d(uc, 0) > d(eklem, 0) * 1.15;
   const isaret = acik(8, 6), orta = acik(12, 10), yuzuk = acik(16, 14), serce = acik(20, 18);
   EL.var = true;
+  // Açık avuç: dört parmak açık (geri hareketi için)
+  EL.avuc = isaret && orta && yuzuk && serce && d(4, 8) / Math.max(1e-3, d(0, 9)) > 0.5;
+  if (EL.avuc) { if (!EL.avucBasi) EL.avucBasi = t; } else EL.avucBasi = 0;
   // Çimdik: başparmak ucu ile işaret ucu birleşti (el boyuna göre). Açılıp kapanmada titreşmesin diye iki eşik.
   const boy = Math.max(1e-3, d(0, 9)), aralik = d(4, 8) / boy;
   const oncekiCimdik = EL.cimdik;
@@ -369,7 +372,7 @@ async function kameraBaslat() {
     await video.play();
     $("bKamera").textContent = "Kamera açık";
     $("bKamera").disabled = true;
-    for (const b of ["bKalibre", "bCanli", "bIsabet", "bKilitTest", "bDokunKal", "bDokunEkle", "bParmakTest"]) $(b).disabled = false;
+    for (const b of ["bKalibre", "bCanli", "bIsabet", "bKilitTest", "bDokunKal", "bDokunEkle", "bParmakTest", "bTelefonTest"]) $(b).disabled = false;
     requestAnimationFrame(dongu);
   } catch (e) {
     $("kameraNot").textContent = "Kamera açılamadı: " + (e?.message || e) + ". Tarayıcıya kamera izni verip tekrar dene.";
@@ -1311,6 +1314,171 @@ function parmakTesti() {
   };
 }
 
+// ------------------------------------------------------------------ telefon testi
+// Gerçek bir Android ekranını taklit eder: ana ekran, mesaj listesi, kişi ekranı, geri.
+function telefonTesti() {
+  const UYG = ["Telefon", "Mesajlar", "Kamera", "Galeri", "Ayarlar", "Saat", "Hava", "Harita", "Müzik", "Notlar", "Takvim", "Hesap", "Posta", "Tarayıcı", "Dosyalar", "Radyo", "Kitap", "Oyun", "Sağlık", "Market"];
+  const RENKLER = ["#3b82f6", "#22c55e", "#f59e0b", "#ec4899", "#64748b", "#8b5cf6", "#0ea5e9", "#10b981", "#ef4444", "#eab308"];
+  const KISI = ["Ahmet", "Ayşe", "Mehmet", "Fatma", "Ali", "Zeynep", "Mustafa", "Elif", "Hasan", "Emine", "Hüseyin", "Hatice", "İbrahim", "Merve", "Osman", "Esra", "Yusuf", "Büşra", "Murat", "Selin", "Emre", "Derya", "Burak", "Gizem", "Can", "Ece", "Kerem", "Seda", "Onur", "Pınar", "Serkan", "Tuğba", "Cem", "Aslı", "Volkan", "Gamze", "Barış", "İrem", "Kaan", "Nazlı"];
+  const isim = KISI[18 + Math.floor(Math.random() * 20)];
+  const UST = 90, ALT = 100, SATIR = 72;
+  const gorevler = [
+    { metin: "Mesajlar'ı aç", olay: "ac:Mesajlar" },
+    { metin: `${isim} adlı kişiye kadar kaydır ve aç`, olay: `kisi:${isim}` },
+    { metin: "Gönder'e bas", olay: "gonder" },
+    { metin: "Geri dön (geri düğmesi ya da açık avuç)", olay: "geri:liste" },
+    { metin: "Ana ekrana dön", olay: "geri:ana" },
+    { metin: "Saat'i aç", olay: "ac:Saat" },
+  ];
+  const d = { ekran: "ana", uyg: null, kisi: null, off: 0, bas: null, sonT: 0, i: 0, basi: performance.now(), gorevBasi: performance.now(), yanlis: 0, sureler: [], flas: null, bitti: false, sonGeri: 0 };
+  const im = imlecMotoru(() => ogeler().map((o) => ({ x: o.x + o.w / 2, y: o.y + o.h / 2, r: Math.min(o.w, o.h) / 2 })));
+  const listeBoyu = () => Math.max(0, KISI.length * SATIR - (H - UST - 60 - ALT));
+
+  function ogeler() {
+    const l = [];
+    if (d.ekran === "ana") {
+      const cw = W / 4;
+      UYG.forEach((ad, i) => l.push({ id: "uyg:" + ad, ad, i, x: (i % 4) * cw + cw / 2 - 34, y: UST + 20 + Math.floor(i / 4) * 100, w: 68, h: 84 }));
+      return l;
+    }
+    l.push({ id: "geri", x: 8, y: UST + 4, w: 52, h: 52 });
+    if (d.ekran === "liste") {
+      const y0 = UST + 60;
+      KISI.forEach((ad, i) => {
+        const y = y0 + i * SATIR - d.off;
+        if (y + SATIR > y0 && y < H - ALT) l.push({ id: "kisi:" + ad, ad, i, x: 0, y: y + 2, w: W, h: SATIR - 4 });
+      });
+    } else if (d.ekran === "kisi") {
+      l.push({ id: "ara", x: 24, y: H - ALT - 72, w: 120, h: 56 });
+      l.push({ id: "gonder", x: W - 144, y: H - ALT - 72, w: 120, h: 56 });
+    }
+    return l;
+  }
+
+  function olay(o) {
+    const g = gorevler[d.i];
+    if (g && g.olay === o) {
+      const t = performance.now();
+      d.sureler.push(t - d.gorevBasi); d.gorevBasi = t; d.i++;
+      if (d.i >= gorevler.length) bitir();
+      return true;
+    }
+    return false;
+  }
+  function geri() {
+    if (d.ekran === "kisi") { d.ekran = "liste"; return olay("geri:liste"); }
+    if (d.ekran === "liste" || d.ekran === "uyg") { d.ekran = "ana"; d.off = 0; return olay("geri:ana"); }
+    return false;
+  }
+  function tikla(p) {
+    const o = ogeler().find((e) => p.x >= e.x - 4 && p.x <= e.x + e.w + 4 && p.y >= e.y - 4 && p.y <= e.y + e.h + 4);
+    let dogru = false;
+    if (o) {
+      if (o.id === "geri") dogru = geri();
+      else if (o.id.startsWith("uyg:")) { d.ekran = o.ad === "Mesajlar" ? "liste" : "uyg"; d.uyg = o.ad; d.off = 0; dogru = olay("ac:" + o.ad); }
+      else if (o.id.startsWith("kisi:")) { d.ekran = "kisi"; d.kisi = o.ad; dogru = olay("kisi:" + o.ad); }
+      else if (o.id === "gonder") dogru = d.kisi === isim && olay("gonder");
+    }
+    // Geri düğmesi yanlış sayılmaz (yanlış ekrandan dönmek için gerekir)
+    if (!dogru && o?.id !== "geri") d.yanlis++;
+    d.flas = { ...p, iyi: dogru || o?.id === "geri", bitis: performance.now() + 500 };
+  }
+  function bitir() {
+    d.bitti = true;
+    const top = (performance.now() - d.basi) / 1000;
+    const ozet = { kontrol: S.kontrol, tik: S.tikYontem, sureSn: +top.toFixed(1), yanlis: d.yanlis, gorevSn: d.sureler.map((x) => +(x / 1000).toFixed(1)) };
+    sonucEkle("Telefon", ozet, `${S.kontrol} · ${top.toFixed(0)} sn · ${d.yanlis} yanlış · görevler ${ozet.gorevSn.join("/")} sn`);
+    hud("Telefon testi bitti", `${gorevler.length} görev ${top.toFixed(0)} saniyede · ${d.yanlis} yanlış tık`, `Görev süreleri: ${ozet.gorevSn.join(" · ")} sn`);
+    dugmeler([["Tekrar", () => { sahneKapat(); sahneAc(telefonTesti()); }, true]]);
+  }
+
+  return {
+    elIster: true,
+    ac() { dugmeler([]); },
+    kare(k, t) {
+      if (d.bitti) return;
+      const dt = d.sonT ? Math.min(0.1, (t - d.sonT) / 1000) : 0;
+      d.sonT = t;
+      // Kaydırma: iki parmak (liste ekranında)
+      const iki = EL.iki || (EL.var && t - EL.sonIki < 300);
+      if (iki && d.ekran === "liste") {
+        if (!d.bas) d.bas = { y: EL.y, off: d.off };
+        const dy = EL.y - d.bas.y;
+        if (S.kaydirModu === "joystick") d.off += (Math.abs(dy) < 0.02 ? 0 : ((dy - Math.sign(dy) * 0.02) / 0.1) * S.kaydirHiz) * dt;
+        else d.off = d.bas.off + dy * S.kaydirMesafe * H;
+        d.off = kis(d.off, 0, listeBoyu());
+      } else d.bas = null;
+      // Geri: açık avuç 0,6 sn
+      if (EL.avuc && EL.avucBasi && t - EL.avucBasi > 600 && t - d.sonGeri > 1200) { d.sonGeri = t; geri(); }
+      if (iki) return;
+      const tik = im.guncelle(k, t);
+      if (tik) tikla(tik);
+    },
+    ciz() {
+      if (d.bitti) return;
+      const t = performance.now();
+      const g = gorevler[d.i];
+      hud(`Görev ${d.i + 1} / ${gorevler.length}: ${g.metin}`, null, "");
+      im.ciz(() => cizEkran());
+      if (d.flas && t < d.flas.bitis) daire(d.flas.x, d.flas.y, 12, d.flas.iyi ? RENK.iyi : RENK.uyari);
+      if (EL.avuc && EL.avucBasi) {
+        const p = Math.min(1, (t - EL.avucBasi) / 600);
+        ctx.fillStyle = "rgba(90,162,255,.9)"; ctx.font = "700 15px system-ui"; ctx.textAlign = "center";
+        ctx.fillText(`Geri ${Math.round(p * 100)}%`, W / 2, H - ALT + 30); ctx.textAlign = "start";
+      }
+    },
+  };
+
+  function cizEkran() {
+    ctx.fillStyle = "#0b1220"; ctx.fillRect(0, UST - 10, W, H - UST - ALT + 10);
+    ctx.textBaseline = "middle";
+    if (d.ekran === "ana") {
+      for (const o of ogeler()) {
+        const cx = o.x + o.w / 2;
+        daire(cx, o.y + 28, 26, RENKLER[o.i % RENKLER.length]);
+        ctx.fillStyle = "#fff"; ctx.font = "700 20px system-ui"; ctx.textAlign = "center";
+        ctx.fillText(o.ad[0], cx, o.y + 29);
+        ctx.fillStyle = RENK.yazi; ctx.font = "13px system-ui";
+        ctx.fillText(o.ad, cx, o.y + 72);
+      }
+      ctx.textAlign = "start"; ctx.textBaseline = "alphabetic";
+      return;
+    }
+    // üst çubuk
+    ctx.fillStyle = "#111a2b"; ctx.fillRect(0, UST, W, 60);
+    ctx.fillStyle = RENK.yazi; ctx.font = "700 30px system-ui"; ctx.fillText("‹", 24, UST + 30);
+    ctx.font = "700 18px system-ui";
+    ctx.fillText(d.ekran === "liste" ? "Mesajlar" : d.ekran === "kisi" ? d.kisi : d.uyg, 72, UST + 30);
+    if (d.ekran === "liste") {
+      ctx.save(); ctx.beginPath(); ctx.rect(0, UST + 60, W, H - UST - 60 - ALT); ctx.clip();
+      for (const o of ogeler()) {
+        if (o.id === "geri") continue;
+        ctx.fillStyle = o.ad === isim ? "rgba(255,194,75,.12)" : "rgba(255,255,255,.03)";
+        ctx.fillRect(0, o.y, W, o.h);
+        daire(40, o.y + o.h / 2, 22, RENKLER[o.i % RENKLER.length]);
+        ctx.fillStyle = "#fff"; ctx.font = "700 16px system-ui"; ctx.textAlign = "center"; ctx.fillText(o.ad[0], 40, o.y + o.h / 2 + 1); ctx.textAlign = "start";
+        ctx.fillStyle = RENK.yazi; ctx.font = "700 16px system-ui"; ctx.fillText(o.ad, 76, o.y + o.h / 2 - 10);
+        ctx.fillStyle = "#8a96a8"; ctx.font = "14px system-ui"; ctx.fillText("Son mesaj: yarın görüşelim mi?", 76, o.y + o.h / 2 + 12);
+      }
+      ctx.restore();
+    } else if (d.ekran === "kisi") {
+      ctx.fillStyle = "#1c2a44"; ctx.fillRect(24, UST + 90, W * 0.6, 44);
+      ctx.fillStyle = RENK.yazi; ctx.font = "15px system-ui"; ctx.fillText("Merhaba, nasılsın?", 36, UST + 112);
+      for (const o of ogeler()) {
+        if (o.id === "geri") continue;
+        ctx.fillStyle = o.id === "gonder" ? "#3b82f6" : "#334155";
+        ctx.fillRect(o.x, o.y, o.w, o.h);
+        ctx.fillStyle = "#fff"; ctx.font = "700 16px system-ui"; ctx.textAlign = "center";
+        ctx.fillText(o.id === "gonder" ? "Gönder" : "Ara", o.x + o.w / 2, o.y + o.h / 2); ctx.textAlign = "start";
+      }
+    } else {
+      ctx.fillStyle = "#8a96a8"; ctx.font = "16px system-ui"; ctx.textAlign = "center";
+      ctx.fillText(`${d.uyg} açıldı`, W / 2, H / 2); ctx.textAlign = "start";
+    }
+    ctx.textBaseline = "alphabetic";
+  }
+}
+
 // ------------------------------------------------------------------ sonuçlar
 let sonuclar = oku("gk-sonuc", []);
 function sonucEkle(tur, ozet, yazi) {
@@ -1334,6 +1502,7 @@ $("bKilitTest").addEventListener("click", () => sahneAc(tiklamaTesti()));
 $("bDokunKal").addEventListener("click", () => sahneAc(dokunarakKalibrasyon(false)));
 $("bDokunEkle").addEventListener("click", () => sahneAc(dokunarakKalibrasyon(true)));
 $("bParmakTest").addEventListener("click", () => sahneAc(parmakTesti()));
+$("bTelefonTest").addEventListener("click", () => sahneAc(telefonTesti()));
 $("bProfilSil").addEventListener("click", () => { P.ornekler = []; profilKaydet(); kaymaSifirla(); profilEgit(true); });
 $("bKaymaSifirla").addEventListener("click", () => {
   kaymaSifirla();
