@@ -1289,8 +1289,9 @@ function kaydirGuncelle(kd, t, dt, satir, hiza, enFazla) {
   if (S.kaydirModu === "cimdik" || S.kaydirModu === "yumruk") {
     // Yumruk: kısa algılama boşluklarında (200 ms) bırakılmış sayılmasın
     const tutuyor = S.kaydirModu === "yumruk" ? EL.var && (EL.yumruk || (kd.bas && t - EL.sonYumruk < 200)) : EL.surukle;
-    if (tutuyor) {
-      // Dokunmatik ekrandaki gibi: el yukarı giderse içerik yukarı gider
+    if (tutuyor && S.kaydirModu === "yumruk" && !EL.yumruk) {
+      surer = true; // kısa boşluk: el açılırken takip noktası değişir, konumu kullanma
+    } else if (tutuyor) {
       if (!kd.bas) kd.bas = { y: EL.y, off: kd.off };
       const yeni = kd.bas.off + (S.surukleYon === "ters" ? 1 : -1) * (EL.y - kd.bas.y) * S.kaydirMesafe * H;
       if (dt > 0) kd.v = kd.v * 0.5 + ((yeni - kd.off) / dt) * 0.5;
