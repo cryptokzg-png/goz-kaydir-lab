@@ -3,7 +3,7 @@
 // buradaki ayarlar bulunduktan sonra uygulamaya aktarılır.
 import { FaceLandmarker, HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const SURUM = "lab 24";
+const SURUM = "lab 26";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -164,6 +164,8 @@ class Model {
 }
 
 function egit(ornekler, set = S.ozellik, lambdaOran = S.lambda) {
+  // Baş hareketi örnekleri (t: 3) baş ölçümü olmayan modellere sadece gürültü katar
+  if (set !== "yeni") ornekler = ornekler.filter((o) => o.t !== 3);
   if (ornekler.length < 20) return null;
   const nf = set === "eski" ? 6 : OZ_SAYI;
   const mu = [], sd = [];
@@ -241,7 +243,7 @@ function izgaraSec(isabet) {
 }
 
 // ------------------------------------------------------------------ profil
-// t: 0 kalibrasyon, 1 kullanırken öğrenilen, 2 dokunarak düzeltme
+// t: 0 kalibrasyon, 1 kullanırken öğrenilen, 2 dokunarak düzeltme, 3 baş hareketi (göz noktada, baş oynuyor)
 const P = { ornekler: oku("gk-profil", []), model: null, deger: null, cols: 3, rows: 3, aralik: null, kayma: oku("gk-kayma", { x: 0, y: 0 }) };
 // Sabit kayma düzeltmesi: tahmin − gerçek bakış farkının yürüyen ortalaması (ekranın oranı olarak).
 function kaymaGuncelle(hataX, hataY, oran = S.kaymaHiz) {
@@ -333,11 +335,12 @@ function profilEgit(degerlendirmeYap) {
 function profilCiz() {
   const kal = P.ornekler.filter((o) => o.t === 0).length;
   const duz = P.ornekler.filter((o) => o.t === 2).length;
+  const bas = P.ornekler.filter((o) => o.t === 3).length;
   if (!P.ornekler.length) { $("profilOzet").textContent = "Henüz kalibrasyon yok. Önce kalibre et."; $("izgaraTablo").innerHTML = ""; return; }
   const ar = P.aralik ? ` · uzaklık ${P.aralik[0].toFixed(0)}–${P.aralik[1].toFixed(0)} cm` : "";
   const ky = Math.round(P.kayma.x * innerWidth), kd = Math.round(P.kayma.y * innerHeight);
   const af = S.kaymaTur === "afin" && P.afin ? ` · afin: ölçek ${P.afin.ax[1].toFixed(2)} / ${P.afin.ay[2].toFixed(2)} (${P.afin.n} bilinen bakış)` : "";
-  $("profilOzet").textContent = `${kal} kalibrasyon + ${duz} düzeltme örneği · özellik: ${S.ozellik} λ${S.lambda}${ar} · seçili ızgara ${P.cols}×${P.rows}` +
+  $("profilOzet").textContent = `${kal} kalibrasyon + ${duz} düzeltme${bas ? ` + ${bas} baş hareketi` : ""} örneği · özellik: ${S.ozellik} λ${S.lambda}${ar} · seçili ızgara ${P.cols}×${P.rows}` +
     ` · kayma düzeltmesi ${ky} / ${kd} px${af}` + (P.model ? "" : " · model eğitilemedi");
   if (!P.deger) { $("izgaraTablo").innerHTML = ""; return; }
   const d = P.deger;
@@ -472,7 +475,7 @@ async function kameraBaslat() {
     await video.play();
     $("bKamera").textContent = "Kamera açık";
     $("bKamera").disabled = true;
-    for (const b of ["bKalibre", "bCanli", "bIsabet", "bKilitTest", "bDokunKal", "bDokunEkle", "bParmakTest", "bTelefonTest"]) $(b).disabled = false;
+    for (const b of ["bKalibre", "bCanli", "bIsabet", "bKilitTest", "bDokunKal", "bDokunEkle", "bBasKal", "bParmakTest", "bTelefonTest"]) $(b).disabled = false;
     requestAnimationFrame(dongu);
   } catch (e) {
     $("kameraNot").textContent = "Kamera açılamadı: " + (e?.message || e) + ". Tarayıcıya kamera izni verip tekrar dene.";
@@ -646,13 +649,29 @@ function tahminGuncelle(k) {
 const sahne = $("sahne"), tuval = $("tuval"), ctx = tuval.getContext("2d");
 let aktif = null, W = innerWidth, H = innerHeight;
 
+// Sahne her zaman GÖRÜNEN alanı kaplar. Sayfa yakınlaştırılmışsa (iki parmak, çift dokunma) innerWidth/innerHeight
+// görünen alandan büyüktür: noktalar ekran dışına düşer, kalibrasyon ile kullanım farklı koordinatta kalır.
+function gorunenAlan() {
+  const v = window.visualViewport;
+  return v ? { x: v.offsetLeft, y: v.offsetTop, w: v.width, h: v.height, olcek: v.scale } : { x: 0, y: 0, w: innerWidth, h: innerHeight, olcek: 1 };
+}
 function boyutla() {
-  W = innerWidth; H = innerHeight;
+  const a = gorunenAlan();
+  Object.assign(sahne.style, { left: a.x + "px", top: a.y + "px", width: a.w + "px", height: a.h + "px", right: "auto", bottom: "auto" });
+  W = a.w; H = a.h;
   const dpr = devicePixelRatio || 1;
   tuval.width = Math.round(W * dpr); tuval.height = Math.round(H * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 addEventListener("resize", () => { if (aktif) boyutla(); });
+window.visualViewport?.addEventListener("resize", () => { if (aktif) boyutla(); });
+window.visualViewport?.addEventListener("scroll", () => { if (aktif) boyutla(); });
+// Profilin kalibre edildiği sahne boyutu: farklıysa (yakınlaştırma, döndürme, tam ekran) uyar
+function ekranKaydet() { yaz("gk-ekran", { w: Math.round(W), h: Math.round(H) }); }
+function ekranUyumsuz() {
+  const e = oku("gk-ekran", null);
+  return e && P.ornekler.length && (Math.abs(e.w - W) > 8 || Math.abs(e.h - H) > 40) ? e : null;
+}
 
 function sahneAc(h) {
   aktif = h;
@@ -664,6 +683,8 @@ function sahneAc(h) {
   dugmeler([]);
   $("bekleKutu").hidden = true;
   h.ac?.();
+  const e = ekranUyumsuz();
+  if (e) hud(null, `Uyarı: profil ${e.w}×${e.h} ekranda kalibre edildi, şimdi ${Math.round(W)}×${Math.round(H)}. Sayfa yakınlaştırılmış ya da döndürülmüş olabilir; düzelt ya da yeniden kalibre et.`, null);
   requestAnimationFrame(cizDongu);
 }
 
@@ -720,7 +741,10 @@ function dugmeler(liste) {
 }
 
 tuval.addEventListener("pointerdown", () => aktif?.bas?.());
-tuval.addEventListener("pointerup", (e) => aktif?.dokun?.(e.clientX / W, e.clientY / H));
+tuval.addEventListener("pointerup", (e) => {
+  const r = tuval.getBoundingClientRect();
+  aktif?.dokun?.((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
+});
 
 // çizim yardımcıları
 const RENK = { vurgu: "#ffc24b", mavi: "#5aa2ff", iyi: "#4ade80", uyari: "#ff8a4c", cizgi: "rgba(255,255,255,.16)", yazi: "#e8edf3" };
@@ -765,6 +789,12 @@ function yakinHedef(x, y, liste) {
   if (!ad.length) return null;
   if (ad.length >= 2 && ad[0][1] > 10 && ad[1][1] < ad[0][1] * 1.5) return null;
   return ad[0][1] < 90 ? ad[0][0] : null;
+}
+
+/** Bakışın hedefe uzaklığı: hedefin kenarına (içindeyse 0); eşitlikte merkeze yakın olan önde. */
+function hedefUzak(h, x, y) {
+  const w = h.w ?? 2 * h.r, hh = h.h ?? 2 * h.r;
+  return Math.hypot(Math.max(0, Math.abs(x - h.x) - w / 2), Math.max(0, Math.abs(y - h.y) - hh / 2)) + 0.25 * Math.hypot(x - h.x, y - h.y);
 }
 
 function imlecMotoru(hedefler = () => []) {
@@ -842,7 +872,7 @@ function imlecMotoru(hedefler = () => []) {
       else if (t - m.sabitBasi >= S.kilitSabitMs) {
         m.kilitli = true; m.kilitX = m.x; m.kilitY = m.y; m.refD = m.basD; m.refE = m.basE; m.uzakBasi = 0; m.hazir = true;
         // Atlamalı kilit: yakında hedef varsa bakışa en yakın olanın tam ortasına otur
-        const yakin = hedefler().filter((h) => Math.hypot(h.x - gx, h.y - gy) < S.atlaYaricap).sort((a, b) => Math.hypot(a.x - gx, a.y - gy) - Math.hypot(b.x - gx, b.y - gy));
+        const yakin = hedefler().filter((h) => hedefUzak(h, gx, gy) < S.atlaYaricap).sort((a, b) => hedefUzak(a, gx, gy) - hedefUzak(b, gx, gy));
         m.secili = yakin[0] || null;
         if (m.secili) { m.x = m.secili.x; m.y = m.secili.y; }
         m.bekleX = m.x; m.bekleY = m.y; m.bekleBasi = t; m.tetik = false;
@@ -1008,6 +1038,7 @@ function kalibrasyon() {
     if (durum.toplanan.length < 20) { hud("Yeterli ölçüm alınamadı", "Yüzünün göründüğünden emin olup tekrar dene.", ""); return; }
     P.ornekler = durum.toplanan;
     kaymaSifirla();
+    ekranKaydet();
     profilKaydet();
     hud("Model eğitiliyor…", "", "");
     setTimeout(() => {
@@ -1072,6 +1103,57 @@ function kalibrasyon() {
   };
 }
 
+// ------------------------------------------------------------------ baş hareketi kalibrasyonu
+// Göz noktada kalırken baş yavaşça oynatılır. Normal kalibrasyonda baş hiç oynamadığı için model baş açısının
+// etkisini öğrenemez; oturuş/duruş değişince bu, kaymaya dönüşür. Bu adım modele baş telafisini öğretir
+// (sadece baş ölçümlü "Yeni" özellik setinde kullanılır).
+function basKalibrasyonu() {
+  const noktalar = [[0.5, 0.52], [0.25, 0.3], [0.75, 0.3], [0.75, 0.75], [0.25, 0.75]];
+  const SURE = 6000, YERLES = 800;
+  const d = { sira: -1, basi: performance.now(), toplanan: [], don: [], egim: [] };
+  const aralik = (a) => (a.length < 5 ? 0 : (Math.max(...a) - Math.min(...a)) / 2);
+  function bitir() {
+    d.sira = noktalar.length;
+    if (d.toplanan.length < 30) { hud("Yeterli ölçüm alınamadı", "Yüzünün göründüğünden emin olup tekrar dene.", ""); dugmeler([]); return; }
+    P.ornekler = [...P.ornekler.filter((o) => o.t !== 3), ...d.toplanan];
+    profilKaydet();
+    const onceki = S.ozellik;
+    ayarDegisti("ozellik", "yeni"); ayarlariCiz();
+    hud("Baş hareketi öğrenildi", `${d.toplanan.length} örnek · baş ±${aralik(d.don).toFixed(0)}° yatay, ±${aralik(d.egim).toFixed(0)}° dikey`,
+      `Model "Yeni" özellik setine geçti (baş ölçümlü; önceki: ${onceki}).\nİsabet testini farklı bir oturuşla ya da başını biraz çevirerek yap; ` +
+      `sonuçtaki MODEL KARŞILAŞTIRMA, baş telafisinin işe yarayıp yaramadığını gösterir (Yeni ile Göz satırlarını karşılaştır).`);
+    dugmeler([["İsabet testi", () => { sahneKapat(); sahneAc(isabetTesti()); }, true]]);
+  }
+  return {
+    ac() {
+      if (!P.model) { hud("Önce kalibre et", "Baş hareketi adımı mevcut profile eklenir.", ""); return; }
+      hud("Baş hareketi", "Gözünü sarı noktadan ayırma, başını yavaşça sağa-sola ve yukarı-aşağı çevir", "");
+    },
+    kare(k, t) {
+      if (d.sira < 0 || d.sira >= noktalar.length || !k.f || !k.guvenilir || t - d.basi < YERLES) return;
+      const [x, y] = noktalar[d.sira];
+      d.toplanan.push({ f: k.f.slice(), x, y, t: 3 });
+      d.don.push(k.s.donus); d.egim.push(k.s.egim);
+    },
+    ciz() {
+      if (!P.model) return;
+      const t = performance.now();
+      if (d.sira === -1) { if (t - d.basi > 1500 && sonKare?.f) { d.sira = 0; d.basi = t; } return; }
+      if (d.sira >= noktalar.length) return;
+      if (t - d.basi >= SURE) { d.sira++; d.basi = t; if (d.sira >= noktalar.length) { bitir(); return; } }
+      const [nx, ny] = noktalar[d.sira];
+      hudKacin([[nx * W, ny * H]]);
+      const p = Math.min(1, (t - d.basi) / SURE);
+      daire(nx * W, ny * H, 26, null, RENK.vurgu, 3);
+      daire(nx * W, ny * H, 6, RENK.vurgu);
+      ctx.beginPath(); ctx.arc(nx * W, ny * H, 34, -Math.PI / 2, -Math.PI / 2 + p * Math.PI * 2); ctx.strokeStyle = RENK.cizgi; ctx.lineWidth = 3; ctx.stroke();
+      const ax = aralik(d.don), ay = aralik(d.egim);
+      hud(`Baş hareketi · ${d.sira + 1} / ${noktalar.length}`, "Gözün noktada · başını yavaşça çevir (yaklaşık ±10°)",
+        `Şu ana kadar: yatay ±${ax.toFixed(0)}° ${ax >= 8 ? "✓" : ""} · dikey ±${ay.toFixed(0)}° ${ay >= 6 ? "✓" : ""}`);
+    },
+  };
+}
+
 // ------------------------------------------------------------------ dokunarak kalibrasyon
 // Noktanın ortasına bakıp parmakla dokunulur. Dokunmadan hemen önceki kareler (göz hedefteyken)
 // o noktanın örneği olur; dokunma anı ve sonrası atılır (el kamerayı ya da yüzü kapatabilir).
@@ -1086,7 +1168,7 @@ function dokunarakKalibrasyon(ekle) {
   function bitir() {
     if (d.toplanan.length < 20) { hud("Yeterli ölçüm alınamadı", "Yüzünün göründüğünden emin olup tekrar dene.", ""); return; }
     P.ornekler = ekle ? [...P.ornekler, ...d.toplanan] : d.toplanan;
-    if (!ekle) kaymaSifirla();
+    if (!ekle) { kaymaSifirla(); ekranKaydet(); }
     profilKaydet();
     hud("Model eğitiliyor…", "", "");
     setTimeout(() => {
@@ -1225,7 +1307,8 @@ function duzeltmeKarsilastir(sonuc) {
 }
 
 function isabetTesti() {
-  const k3 = [0.15, 0.5, 0.85];
+  // Köşeler de ölçülsün: imlecin kenarlara gidememesi (tahminlerin ortaya sıkışması) burada görünür
+  const k3 = [0.1, 0.5, 0.9];
   const noktalar = k3.flatMap((y) => k3.map((x) => [x, y])).sort(() => Math.random() - 0.5);
   const SURE = 2000, YOK = 800;
   const d = { sira: -1, basi: performance.now(), ornek: [], ham: [], ozler: [], sonuc: [], eklenecek: [], noktaOz: [] };
@@ -1551,7 +1634,7 @@ function telefonTesti() {
     { metin: "Saat'i aç", olay: "ac:Saat" },
   ];
   const d = { ekran: "ana", uyg: null, kisi: null, off: 0, bas: null, sonT: 0, i: 0, basi: performance.now(), gorevBasi: performance.now(), yanlis: 0, sureler: [], flas: null, bitti: false, sonGeri: 0 };
-  const im = imlecMotoru(() => ogeler().map((o) => ({ x: o.x + o.w / 2, y: o.y + o.h / 2, r: Math.min(o.w, o.h) / 2 })));
+  const im = imlecMotoru(() => ogeler().map((o) => ({ x: o.x + o.w / 2, y: o.y + o.h / 2, r: Math.min(o.w, o.h) / 2, w: o.w, h: o.h })));
   const listeBoyu = () => Math.max(0, KISI.length * SATIR - (H - UST - 60 - ALT));
 
   function ogeler() {
@@ -1731,6 +1814,7 @@ $("bIsabet").addEventListener("click", () => sahneAc(isabetTesti()));
 $("bKilitTest").addEventListener("click", () => sahneAc(tiklamaTesti()));
 $("bDokunKal").addEventListener("click", () => sahneAc(dokunarakKalibrasyon(false)));
 $("bDokunEkle").addEventListener("click", () => sahneAc(dokunarakKalibrasyon(true)));
+$("bBasKal").addEventListener("click", () => sahneAc(basKalibrasyonu()));
 $("bParmakTest").addEventListener("click", () => sahneAc(parmakTesti()));
 $("bTelefonTest").addEventListener("click", () => sahneAc(telefonTesti()));
 // Tam gözle kullanım: atlamalı kilit + gözleri kapatarak tıklama + bakarak kaydırma
@@ -1756,6 +1840,26 @@ $("bKopyala").addEventListener("click", async () => {
   try { await navigator.clipboard.writeText(metin); $("bKopyala").textContent = "Kopyalandı"; setTimeout(() => ($("bKopyala").textContent = "Sonuçları ve ayarları kopyala"), 1500); }
   catch { const k = $("kopyaKutu"); k.hidden = false; k.textContent = metin; getSelection().selectAllChildren(k); }
 });
+
+// Telefon tarayıcısı index.html'i önbellekten açabilir (GitHub Pages ~10 dk): yeni sürüm varsa yenilemeyi öner.
+const BU_V = new URL(import.meta.url).searchParams.get("v");
+async function surumKontrol() {
+  if (aktif) return; // test sırasında araya girme
+  try {
+    const r = await fetch(`./?k=${Date.now()}`, { cache: "no-store" });
+    const v = (await r.text()).match(/app\.js\?v=(\d+)/)?.[1];
+    if (!v || !BU_V || v === BU_V || $("yeniSurum")) return;
+    const b = document.createElement("div");
+    b.id = "yeniSurum";
+    b.style.cssText = "position:fixed;left:12px;right:12px;bottom:12px;z-index:50;background:#ffc24b;color:#111;padding:12px 14px;border-radius:12px;font-weight:700;display:flex;gap:10px;align-items:center;justify-content:space-between";
+    b.innerHTML = `<span>Yeni sürüm hazır (lab ${v})</span><button class="btn ana">Yenile</button>`;
+    b.querySelector("button").onclick = () => location.replace(`${location.pathname}?v=${v}`);
+    document.body.appendChild(b);
+  } catch {}
+}
+surumKontrol();
+setInterval(surumKontrol, 120000);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") surumKontrol(); });
 
 ayarlariCiz();
 sonucCiz();
