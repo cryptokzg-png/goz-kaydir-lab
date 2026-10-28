@@ -3,7 +3,7 @@
 // buradaki ayarlar bulunduktan sonra uygulamaya aktarılır.
 import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const SURUM = "lab 10";
+const SURUM = "lab 11";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -1106,7 +1106,12 @@ $("bKilitTest").addEventListener("click", () => sahneAc(tiklamaTesti()));
 $("bDokunKal").addEventListener("click", () => sahneAc(dokunarakKalibrasyon(false)));
 $("bDokunEkle").addEventListener("click", () => sahneAc(dokunarakKalibrasyon(true)));
 $("bProfilSil").addEventListener("click", () => { P.ornekler = []; profilKaydet(); kaymaSifirla(); profilEgit(true); });
-$("bKaymaSifirla").addEventListener("click", kaymaSifirla);
+$("bKaymaSifirla").addEventListener("click", () => {
+  kaymaSifirla();
+  const b = $("bKaymaSifirla");
+  b.textContent = "Sıfırlandı ✓";
+  setTimeout(() => (b.textContent = "Kaymayı sıfırla"), 1500);
+});
 $("bSonucSil").addEventListener("click", () => { sonuclar = []; yaz("gk-sonuc", sonuclar); sonucCiz(); });
 $("bVarsayilan").addEventListener("click", () => { S = { ...VARSAYILAN }; yaz("gk-ayar", S); ayarlariCiz(); profilEgit(true); });
 $("aMod").value = oku("gk-mod", "goz");
