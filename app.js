@@ -3,7 +3,7 @@
 // buradaki ayarlar bulunduktan sonra uygulamaya aktarılır.
 import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const SURUM = "lab 7";
+const SURUM = "lab 8";
 const $ = (id) => document.getElementById(id);
 const deg = (r) => (r * 180) / Math.PI;
 const kis = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -21,8 +21,8 @@ const AYAR_TANIM = [
   { k: "sicramaEsik", ad: "Sıçrama süzgeci (ekranın oranı)", min: 0.05, max: 0.6, adim: 0.01, v: 0.2, not: "Bundan büyük ani sıçramalar onaylanmadan kabul edilmez." },
   { k: "sicramaKare", ad: "Sıçrama onayı (kare)", min: 0, max: 3, adim: 1, v: 1, not: "Büyük sıçramanın kabul edilmesi için kaç kare daha aynı yerde kalmalı. 0 = süzgeç kapalı." },
   { b: "Model" },
-  { k: "ozellik", ad: "Göz özellikleri", secenek: [["yeni", "Yeni (uzaklık + kapak, 10)"], ["eski", "Eski (6)"]], v: "yeni", not: "Değiştirince model aynı örneklerle yeniden eğitilir: farkı hemen ölçebilirsin." },
-  { k: "lambda", ad: "Düzenleme (lambda)", min: 0.002, max: 0.2, adim: 0.002, v: 0.02, not: "Yüksek = daha kararlı ama daha az esnek model." },
+  { k: "ozellik", ad: "Göz özellikleri", secenek: [["yeni", "Yeni (uzaklık + kapak, 10)"], ["eski", "Eski (6)"], ["goz", "Sadece göz (baş yok)"]], v: "yeni", not: "Değiştirince model aynı örneklerle yeniden eğitilir: farkı hemen ölçebilirsin." },
+  { k: "lambda", ad: "Düzenleme (lambda)", min: 0.002, max: 1, adim: 0.002, v: 0.02, not: "Yüksek = daha kararlı ama daha az esnek model." },
   { k: "izgara", ad: "Izgara", secenek: [["oto", "Otomatik"], ["2x3", "2×3"], ["2x4", "2×4"], ["3x3", "3×3"], ["3x4", "3×4"]], v: "oto" },
   { k: "bolgeMs", ad: "Bölge değişme süresi (ms)", min: 0, max: 1000, adim: 50, v: 300 },
   { b: "Kalibrasyon" },
@@ -108,6 +108,8 @@ const UZAKLIK = 8;
 const TABAN = [1e-3, 1e-3, 0.02, 0.02, 2, 2, 1, 1, 2, 0.02];
 
 function terimler(n, set) {
+  // Sadece göz: baş açısı ve konumu yok (iris, kapak, göz ifadeleri)
+  if (set === "goz") return [1, n[0], n[1], n[2], n[3], n[9], n[0] * n[0], n[1] * n[1], n[0] * n[1], n[9] * n[9]];
   if (set === "eski") return [1, n[0], n[1], n[2], n[3], n[4], n[5], n[0] * n[0], n[1] * n[1], n[0] * n[1]];
   const u = n[UZAKLIK];
   return [1, n[0], n[1], n[2], n[3], n[4], n[5], n[6], n[7], n[8], n[9],
@@ -125,7 +127,7 @@ class Model {
   }
 }
 
-function egit(ornekler, set = S.ozellik) {
+function egit(ornekler, set = S.ozellik, lambdaOran = S.lambda) {
   if (ornekler.length < 20) return null;
   const nf = set === "eski" ? 6 : OZ_SAYI;
   const mu = [], sd = [];
@@ -138,12 +140,12 @@ function egit(ornekler, set = S.ozellik) {
   }
   const X = ornekler.map((o) => terimler(mu.map((m, i) => (o.f[i] - m) / sd[i]), set));
   const W = ornekler.map((o) => (o.t === 1 ? 0.5 : 1));
-  const wx = sirt(X, ornekler.map((o) => o.x), W);
-  const wy = sirt(X, ornekler.map((o) => o.y), W);
+  const wx = sirt(X, ornekler.map((o) => o.x), W, lambdaOran);
+  const wy = sirt(X, ornekler.map((o) => o.y), W, lambdaOran);
   return wx && wy ? new Model(mu, sd, wx, wy, set) : null;
 }
 
-function sirt(X, y, w) {
+function sirt(X, y, w, lambdaOran = S.lambda) {
   const n = X[0].length;
   const m = Array.from({ length: n }, () => new Float64Array(n + 1));
   for (let k = 0; k < X.length; k++) {
@@ -153,7 +155,7 @@ function sirt(X, y, w) {
       m[i][n] += a * r[i] * y[k];
     }
   }
-  const lambda = S.lambda * X.length;
+  const lambda = lambdaOran * X.length;
   for (let i = 1; i < n; i++) m[i][i] += lambda;
   for (let p = 0; p < n; p++) {
     let en = p;
@@ -908,7 +910,7 @@ function isabetTesti() {
   const k3 = [0.15, 0.5, 0.85];
   const noktalar = k3.flatMap((y) => k3.map((x) => [x, y])).sort(() => Math.random() - 0.5);
   const SURE = 2000, YOK = 800;
-  const d = { sira: -1, basi: performance.now(), ornek: [], ozler: [], sonuc: [], eklenecek: [] };
+  const d = { sira: -1, basi: performance.now(), ornek: [], ozler: [], sonuc: [], eklenecek: [], noktaOz: [] };
   function bitir() {
     const hata = d.sonuc.map((r) => r.hata), sirali = [...hata].sort((a, b) => a - b);
     const ort = hata.reduce((a, b) => a + b, 0) / hata.length;
@@ -923,6 +925,38 @@ function isabetTesti() {
     const kalan = Math.sqrt(d.sonuc.reduce((a, r) => a + (r.ex - kx) ** 2 + (r.ey - ky) ** 2, 0) / d.sonuc.length);
     hud("İsabet testi bitti", `Ortalama hata ${ozet.ortPx} px ≈ ${Math.round(ozet.ortPx * 0.159)} mm · titreme ±${ozet.titremePx} px`,
       `Sabit kayma: ${yon} (${ozet.kaymaPx} px)\nKayma çıkınca kalan hata: ${kalan.toFixed(0)} px\nOrtanca ${ozet.ortancaPx} px · en kötü ${ozet.enKotuPx} px\n3×3 isabet %${ozet.i3x3} · 3×4 isabet %${ozet.i3x4}`);
+    // Model karşılaştırması: aynı test ölçümleri, profildeki aynı örneklerle eğitilmiş farklı modeller
+    const egitimSeti = P.ornekler.filter((o) => o.t !== 2);
+    const satirlar = [];
+    for (const [set, ad] of [["yeni", "Yeni"], ["eski", "Eski"], ["goz", "Göz"]]) {
+      for (const lam of [0.02, 0.1, 0.5]) {
+        const m = egit(egitimSeti, set, lam);
+        if (!m || !d.noktaOz.length) continue;
+        const e = d.noktaOz.map((n) => {
+          let tx = 0, ty = 0;
+          for (const f of n.ozler) { const [a, b] = m.tahmin(f); tx += a; ty += b; }
+          return [(tx / n.ozler.length - n.x) * W, (ty / n.ozler.length - n.y) * H];
+        });
+        const ort = e.reduce((a, [x, y]) => a + Math.hypot(x, y), 0) / e.length;
+        const mx = e.reduce((a, [x]) => a + x, 0) / e.length, my = e.reduce((a, [, y]) => a + y, 0) / e.length;
+        const kal = Math.sqrt(e.reduce((a, [x, y]) => a + (x - mx) ** 2 + (y - my) ** 2, 0) / e.length);
+        satirlar.push({ ad: `${ad} λ${lam}`, set, lam, ort, kayma: Math.hypot(mx, my), kal });
+      }
+    }
+    satirlar.sort((a, b) => a.ort - b.ort);
+    const tablo = satirlar.map((r, i) => `${i === 0 ? "▶" : " "} ${r.ad.padEnd(11)} ${r.ort.toFixed(0).padStart(4)} px  kayma ${r.kayma.toFixed(0).padStart(4)}  kalan ${r.kal.toFixed(0).padStart(4)}`).join("\n");
+    if (satirlar.length) {
+      ozet.karsilastirma = satirlar.map((r) => ({ model: r.ad, ort: Math.round(r.ort), kayma: Math.round(r.kayma), kalan: Math.round(r.kal) }));
+      sonuclar[0].ozet = ozet; yaz("gk-sonuc", sonuclar);
+      $("hudBilgi").textContent += `\n\nMODEL KARŞILAŞTIRMA (hata · sabit kayma · kalan)\n${tablo}`;
+    }
+    const enIyi = satirlar[0];
+    const enIyiyiSec = () => {
+      ayarDegisti("ozellik", enIyi.set); ayarDegisti("lambda", enIyi.lam);
+      ayarlariCiz();
+      hud("Seçildi", `Model: ${enIyi.ad}. Tekrar test ederek doğrula.`, null);
+      dugmeler([["Tekrar test et", () => { sahneKapat(); sahneAc(isabetTesti()); }, true]]);
+    };
     const ekle = () => {
       P.ornekler.push(...d.eklenecek);
       let fazla = P.ornekler.filter((o) => o.t === 2).length - 600;
@@ -931,7 +965,9 @@ function isabetTesti() {
       hud("Eklendi", `${d.eklenecek.length} örnek profile eklendi. Tekrar test ederek farkı gör.`, null);
       dugmeler([["Tekrar test et", () => { sahneKapat(); sahneAc(isabetTesti()); }, true]]);
     };
-    dugmeler([["Tekrar", () => { sahneKapat(); sahneAc(isabetTesti()); }, true], ...(d.eklenecek.length ? [["Bu ölçümleri profile ekle", ekle]] : [])]);
+    dugmeler([["Tekrar", () => { sahneKapat(); sahneAc(isabetTesti()); }, true],
+      ...(enIyi && (enIyi.set !== S.ozellik || enIyi.lam !== S.lambda) ? [["En iyi modeli seç", enIyiyiSec]] : []),
+      ...(d.eklenecek.length ? [["Bu ölçümleri profile ekle", ekle]] : [])]);
   }
   return {
     ac() { hud("İsabet testi", "Beliren noktaya bak. İmleç gösterilmez (kovalama olmasın).", ""); },
@@ -958,6 +994,7 @@ function isabetTesti() {
           d.sonuc.push({ ex: mx - nx * W, ey: my - ny * H, hata: Math.hypot(mx - nx * W, my - ny * H), titreme });
         }
         for (const f of d.ozler) d.eklenecek.push({ f, x: nx, y: ny, t: 2 });
+        if (d.ozler.length >= 3) d.noktaOz.push({ x: nx, y: ny, ozler: d.ozler });
         d.ornek = []; d.ozler = []; d.sira++; d.basi = t;
         if (d.sira >= noktalar.length) { d.sonuc.length >= 5 ? bitir() : hud("Yeterli ölçüm yok", "Yüzünün göründüğünden emin ol", ""); }
       }
